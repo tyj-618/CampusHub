@@ -1,0 +1,23 @@
+package com.tyj.campushub.auth;
+
+import com.tyj.campushub.common.ErrorCode;
+import com.tyj.campushub.exception.BusinessException;
+import org.springframework.stereotype.Service;
+
+@Service
+public class CurrentUserService {
+
+    private final TokenStore tokenStore;
+
+    public CurrentUserService(TokenStore tokenStore) {
+        this.tokenStore = tokenStore;
+    }
+
+    public Long requireUserId(String authorization) {
+        String token = tokenStore.resolveBearerToken(authorization)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+
+        return tokenStore.findUserId(token)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+    }
+}
