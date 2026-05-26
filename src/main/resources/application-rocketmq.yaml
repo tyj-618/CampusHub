@@ -1,0 +1,9 @@
+rocketmq:
+  name-server: ${CAMPUSHUB_ROCKETMQ_NAME_SERVER:localhost:9876}
+  producer:
+    group: ${CAMPUSHUB_ROCKETMQ_PRODUCER_GROUP:campushub-producer-group}
+
+campushub:
+  rocketmq:
+    comment-topic: ${CAMPUSHUB_COMMENT_TOPIC:campushub-comment-event}
+    like-topic: ${CAMPUSHUB_LIKE_TOPIC:campushub-like-event}

@@ -8,9 +8,9 @@
 
 ### 1.1 认证方式
 
-除注册、登录、分类列表、帖子列表、帖子详情、评论列表、热门帖子接口外，其余接口默认需要登录。
+除注册、登录、分类列表、帖子列表、帖子详情、用户公开主页、用户帖子列表、评论列表、热门帖子接口外，其余接口默认需要登录。
 
-请求头：
+需要登录的接口在请求头中携带：
 
 ```http
 Authorization: Bearer <token>
@@ -18,7 +18,7 @@ Authorization: Bearer <token>
 
 ### 1.2 统一响应结构
 
-成功：
+所有接口都返回统一结构：
 
 ```json
 {
@@ -28,38 +28,36 @@ Authorization: Bearer <token>
 }
 ```
 
-失败：
+失败响应示例：
 
 ```json
 {
-  "code": 40001,
-  "message": "用户名或密码错误",
+  "code": 40100,
+  "message": "未登录或 token 无效",
   "data": null
 }
 ```
 
 ### 1.3 分页响应结构
 
+分页接口的 `data` 统一为：
+
 ```json
 {
-  "code": 0,
-  "message": "success",
-  "data": {
-    "page": 1,
-    "size": 10,
-    "total": 128,
-    "pages": 13,
-    "records": []
-  }
+  "page": 1,
+  "size": 10,
+  "total": 128,
+  "pages": 13,
+  "records": []
 }
 ```
 
-分页参数默认值：
+分页参数：
 
-| 参数 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| page | integer | 1 | 页码，从 1 开始 |
-| size | integer | 10 | 每页数量，建议最大 50 |
+| 参数 | 类型 | 默认值 | 约束 | 说明 |
+| --- | --- | --- | --- | --- |
+| page | integer | 1 | `>= 1` | 页码，从 1 开始 |
+| size | integer | 10 | `1 - 50` | 每页数量 |
 
 ### 1.4 通用错误码
 
@@ -71,7 +69,8 @@ Authorization: Bearer <token>
 | 40100 | 未登录或 token 无效 |
 | 40300 | 无权限 |
 | 40400 | 资源不存在 |
-| 40900 | 资源状态冲突，例如重复点赞 |
+| 40900 | 资源状态冲突 |
+| 40901 | 用户名已存在 |
 | 50000 | 系统内部错误 |
 
 ### 1.5 枚举说明
@@ -97,13 +96,6 @@ Authorization: Bearer <token>
 | 0 | 正常 |
 | 1 | 删除 |
 | 2 | 隐藏 |
-
-点赞状态 `status`：
-
-| 值 | 含义 |
-| --- | --- |
-| 0 | 已点赞 |
-| 1 | 已取消 |
 
 通知类型 `type`：
 
@@ -131,11 +123,11 @@ POST /api/auth/register
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| username | string | 是 | 3-32 位，字母数字下划线 | 用户名 |
+| username | string | 是 | 3-32 位，只能包含字母、数字、下划线 | 用户名 |
 | password | string | 是 | 6-32 位 | 密码 |
-| nickname | string | 是 | 1-32 位 | 昵称 |
+| nickname | string | 是 | 最长 32 位 | 昵称 |
 
-示例：
+请求示例：
 
 ```json
 {
@@ -155,8 +147,6 @@ POST /api/auth/register
 }
 ```
 
-说明：密码入库前必须加密，不返回密码字段。
-
 ### 2.2 用户登录
 
 ```http
@@ -174,7 +164,7 @@ POST /api/auth/login
 
 ```json
 {
-  "token": "jwt-or-session-token",
+  "token": "session-token",
   "expiresIn": 7200,
   "user": {
     "id": 1,
@@ -192,15 +182,12 @@ POST /api/auth/login
 POST /api/auth/logout
 ```
 
-认证：需要登录
-
+认证：需要登录  
 响应 `data`：
 
 ```json
 true
 ```
-
-说明：如果使用 Redis 保存 token 或登录态，此接口应清理服务端登录状态。
 
 ## 3. 用户模块
 
@@ -219,11 +206,11 @@ GET /api/users/me
   "id": 1,
   "username": "alice",
   "nickname": "小艾",
-  "avatarUrl": "https://example.com/avatar.png",
+  "avatarUrl": null,
   "bio": "热爱校园生活",
   "role": 0,
   "status": 0,
-  "createdAt": "2026-05-25T20:30:00"
+  "createdAt": "2026-05-26T20:30:00"
 }
 ```
 
@@ -239,13 +226,13 @@ PUT /api/users/me
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| nickname | string | 否 | 1-32 位 | 昵称 |
-| avatarUrl | string | 否 | 最大 255 位 | 头像地址 |
-| bio | string | 否 | 最大 255 位 | 个人简介 |
+| nickname | string | 否 | 最长 32 位 | 昵称 |
+| avatarUrl | string | 否 | 最长 255 位 | 头像地址 |
+| bio | string | 否 | 最长 255 位 | 个人简介 |
 
-响应 `data`：同当前用户信息。
+响应 `data`：同“获取当前用户信息”。
 
-### 3.3 查看用户主页
+### 3.3 查看用户公开主页
 
 ```http
 GET /api/users/{userId}
@@ -264,15 +251,13 @@ GET /api/users/{userId}
   "id": 1,
   "username": "alice",
   "nickname": "小艾",
-  "avatarUrl": "https://example.com/avatar.png",
+  "avatarUrl": null,
   "bio": "热爱校园生活",
   "postCount": 12,
   "commentCount": 34,
-  "createdAt": "2026-05-25T20:30:00"
+  "createdAt": "2026-05-26T20:30:00"
 }
 ```
-
-说明：不返回密码、角色、状态等敏感或管理字段。
 
 ## 4. 分类模块
 
@@ -295,7 +280,7 @@ GET /api/categories
 ]
 ```
 
-说明：只返回 `status = 0` 的启用分类，按 `sort_order` 升序。
+说明：只返回 `status = 0` 的启用分类，并按 `sort_order` 升序排列。
 
 ## 5. 帖子模块
 
@@ -312,8 +297,8 @@ POST /api/posts
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
 | categoryId | integer | 是 | 必须存在且启用 | 分类 ID |
-| title | string | 是 | 1-100 位 | 标题 |
-| content | string | 是 | 1-5000 位 | 正文内容 |
+| title | string | 是 | 最长 100 位 | 标题 |
+| content | string | 是 | 最长 5000 位 | 正文内容 |
 
 响应 `data`：
 
@@ -322,8 +307,6 @@ POST /api/posts
   "postId": 1001
 }
 ```
-
-说明：创建帖子时同步创建 `post_stat` 记录，计数初始值为 0。
 
 ### 5.2 分页查询帖子列表
 
@@ -336,7 +319,7 @@ GET /api/posts
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | page | integer | 否 | 1 | 页码 |
-| size | integer | 否 | 10 | 每页数量 |
+| size | integer | 否 | 10 | 每页数量，最大 50 |
 | categoryId | integer | 否 | 无 | 分类 ID |
 | keyword | string | 否 | 无 | 标题或正文关键词 |
 | sort | string | 否 | latest | `latest` 最新，`hot` 热度 |
@@ -362,11 +345,9 @@ GET /api/posts
   "likeCount": 8,
   "commentCount": 5,
   "hotScore": 36.5,
-  "createdAt": "2026-05-25T20:30:00"
+  "createdAt": "2026-05-26T20:30:00"
 }
 ```
-
-说明：只查询 `status = 0` 的正常帖子。
 
 ### 5.3 获取帖子详情
 
@@ -379,6 +360,8 @@ GET /api/posts/{postId}
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | postId | integer | 帖子 ID |
+
+认证：可选。已登录时会返回当前用户是否点赞。
 
 响应 `data`：
 
@@ -401,16 +384,12 @@ GET /api/posts/{postId}
   "likeCount": 8,
   "commentCount": 5,
   "liked": false,
-  "createdAt": "2026-05-25T20:30:00",
-  "updatedAt": "2026-05-25T20:30:00"
+  "createdAt": "2026-05-26T20:30:00",
+  "updatedAt": "2026-05-26T20:30:00"
 }
 ```
 
-说明：
-
-- 访问详情时增加浏览量。
-- 浏览量可以先同步更新 MySQL，后续优化为 Redis 缓存加定时批量刷库。
-- 未登录用户访问时 `liked` 默认为 `false`。
+说明：访问详情时会记录浏览量。当前实现使用内存计数 + 定时批量刷库，详情响应里的 `viewCount` 可能不是刚刚访问后的实时值。
 
 ### 5.4 编辑帖子
 
@@ -424,9 +403,9 @@ PUT /api/posts/{postId}
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| categoryId | integer | 否 | 必须存在且启用 | 分类 ID |
-| title | string | 否 | 1-100 位 | 标题 |
-| content | string | 否 | 1-5000 位 | 正文内容 |
+| categoryId | integer | 是 | 必须存在且启用 | 分类 ID |
+| title | string | 是 | 最长 100 位 | 标题 |
+| content | string | 是 | 最长 5000 位 | 正文内容 |
 
 响应 `data`：
 
@@ -448,7 +427,7 @@ DELETE /api/posts/{postId}
 true
 ```
 
-说明：第一版建议软删除，将 `post.status` 更新为 `1`。
+说明：当前实现为软删除，将 `post.status` 更新为 `1`。
 
 ### 5.6 获取用户发布的帖子
 
@@ -461,9 +440,9 @@ GET /api/users/{userId}/posts
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | page | integer | 否 | 1 | 页码 |
-| size | integer | 否 | 10 | 每页数量 |
+| size | integer | 否 | 10 | 每页数量，最大 50 |
 
-响应：同帖子列表分页结构。
+响应：同“分页查询帖子列表”。
 
 ### 5.7 获取热门帖子榜
 
@@ -475,7 +454,7 @@ GET /api/posts/hot
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
-| limit | integer | 否 | 10 | 返回数量，建议最大 50 |
+| limit | integer | 否 | 10 | 返回数量，最大 50 |
 | categoryId | integer | 否 | 无 | 分类 ID |
 
 响应 `data`：
@@ -494,7 +473,7 @@ GET /api/posts/hot
 ]
 ```
 
-说明：第一版可按 `post_stat.hot_score` 排序；后续可迁移到 Redis ZSet。
+说明：默认按 `post_stat.hot_score` 排序；开启 Redis 时会缓存热门帖子结果。
 
 ## 6. 评论模块
 
@@ -510,7 +489,7 @@ POST /api/posts/{postId}/comments
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 | --- | --- | --- | --- | --- |
-| content | string | 是 | 1-500 位 | 评论内容 |
+| content | string | 是 | 最长 500 位 | 评论内容 |
 
 响应 `data`：
 
@@ -520,10 +499,7 @@ POST /api/posts/{postId}/comments
 }
 ```
 
-说明：
-
-- 评论成功后增加 `post_stat.comment_count`。
-- 评论别人的帖子时发送评论事件，后续由 RocketMQ 消费生成通知。
+说明：评论成功后会增加帖子评论数和热度；评论别人的帖子时会发布评论事件，当前默认同步生成通知，开启 RocketMQ profile 后异步消费生成通知。
 
 ### 6.2 查询帖子评论列表
 
@@ -536,7 +512,7 @@ GET /api/posts/{postId}/comments
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | page | integer | 否 | 1 | 页码 |
-| size | integer | 否 | 10 | 每页数量 |
+| size | integer | 否 | 10 | 每页数量，最大 50 |
 
 响应 `data.records[]`：
 
@@ -549,11 +525,9 @@ GET /api/posts/{postId}/comments
     "nickname": "小林",
     "avatarUrl": null
   },
-  "createdAt": "2026-05-25T21:00:00"
+  "createdAt": "2026-05-26T21:00:00"
 }
 ```
-
-说明：第一版只做一级评论，按创建时间升序或降序均可，建议默认升序。
 
 ### 6.3 删除评论
 
@@ -569,7 +543,7 @@ DELETE /api/comments/{commentId}
 true
 ```
 
-说明：第一版建议软删除，将 `comment.status` 更新为 `1`，并扣减 `post_stat.comment_count`。
+说明：当前实现为软删除，将 `comment.status` 更新为 `1`，并扣减帖子评论数和热度。
 
 ### 6.4 获取当前用户评论列表
 
@@ -584,7 +558,7 @@ GET /api/users/me/comments
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | page | integer | 否 | 1 | 页码 |
-| size | integer | 否 | 10 | 每页数量 |
+| size | integer | 否 | 10 | 每页数量，最大 50 |
 
 响应 `data.records[]`：
 
@@ -594,7 +568,7 @@ GET /api/users/me/comments
   "postId": 1001,
   "postTitle": "高数复习资料怎么整理？",
   "content": "我一般先整理错题，再刷历年卷。",
-  "createdAt": "2026-05-25T21:00:00"
+  "createdAt": "2026-05-26T21:00:00"
 }
 ```
 
@@ -617,11 +591,7 @@ POST /api/posts/{postId}/like
 }
 ```
 
-说明：
-
-- 同一用户对同一帖子只能有一条 `post_like` 记录。
-- 如果已取消点赞，再次点赞应将 `status` 改回 `0`。
-- 点赞别人的帖子时发送点赞事件，后续由 RocketMQ 消费生成通知。
+说明：点赞别人的帖子时会发布点赞事件，当前默认同步生成通知，开启 RocketMQ profile 后异步消费生成通知。
 
 ### 7.2 取消点赞帖子
 
@@ -671,7 +641,7 @@ GET /api/notices
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | page | integer | 否 | 1 | 页码 |
-| size | integer | 否 | 10 | 每页数量 |
+| size | integer | 否 | 10 | 每页数量，最大 50 |
 | readStatus | integer | 否 | 无 | `0` 未读，`1` 已读 |
 
 响应 `data.records[]`：
@@ -689,11 +659,9 @@ GET /api/notices
   },
   "postId": 1001,
   "commentId": 3001,
-  "createdAt": "2026-05-25T21:10:00"
+  "createdAt": "2026-05-26T21:10:00"
 }
 ```
-
-说明：只查询当前登录用户作为 `receiver_id` 的通知。
 
 ### 8.2 查询未读通知数
 
@@ -717,15 +685,13 @@ GET /api/notices/unread-count
 PUT /api/notices/{noticeId}/read
 ```
 
-认证：需要登录
+认证：需要登录，只能操作当前用户自己的通知。
 
 响应 `data`：
 
 ```json
 true
 ```
-
-说明：只能操作当前登录用户自己的通知。
 
 ### 8.4 标记全部通知已读
 
@@ -745,15 +711,13 @@ PUT /api/notices/read-all
 
 ## 9. 管理接口
 
-第一版可以先不实现管理后台页面，但建议保留少量管理接口，方便展示权限控制。
+管理接口都需要管理员登录。
 
 ### 9.1 隐藏帖子
 
 ```http
 PUT /api/admin/posts/{postId}/hide
 ```
-
-认证：需要管理员
 
 响应 `data`：
 
@@ -769,8 +733,6 @@ true
 PUT /api/admin/posts/{postId}/restore
 ```
 
-认证：需要管理员
-
 响应 `data`：
 
 ```json
@@ -785,23 +747,19 @@ true
 PUT /api/admin/users/{userId}/disable
 ```
 
-认证：需要管理员
-
 响应 `data`：
 
 ```json
 true
 ```
 
-说明：将 `user.status` 更新为 `1`。
+说明：将 `user.status` 更新为 `1`。当前代码禁止管理员禁用自己，但未禁止管理员禁用其他管理员。
 
 ### 9.4 启用用户
 
 ```http
 PUT /api/admin/users/{userId}/enable
 ```
-
-认证：需要管理员
 
 响应 `data`：
 
@@ -813,22 +771,22 @@ true
 
 ## 10. 接口清单
 
-| 模块 | 方法 | 路径 | 说明 | 是否登录 |
+| 模块 | 方法 | 路径 | 说明 | 认证 |
 | --- | --- | --- | --- | --- |
 | 认证 | POST | `/api/auth/register` | 用户注册 | 否 |
 | 认证 | POST | `/api/auth/login` | 用户登录 | 否 |
 | 认证 | POST | `/api/auth/logout` | 用户退出 | 是 |
 | 用户 | GET | `/api/users/me` | 当前用户信息 | 是 |
 | 用户 | PUT | `/api/users/me` | 修改当前用户资料 | 是 |
-| 用户 | GET | `/api/users/{userId}` | 用户主页 | 否 |
+| 用户 | GET | `/api/users/{userId}` | 用户公开主页 | 否 |
 | 分类 | GET | `/api/categories` | 分类列表 | 否 |
 | 帖子 | POST | `/api/posts` | 发布帖子 | 是 |
 | 帖子 | GET | `/api/posts` | 帖子列表 | 否 |
-| 帖子 | GET | `/api/posts/{postId}` | 帖子详情 | 否 |
+| 帖子 | GET | `/api/posts/{postId}` | 帖子详情 | 可选 |
 | 帖子 | PUT | `/api/posts/{postId}` | 编辑帖子 | 是 |
 | 帖子 | DELETE | `/api/posts/{postId}` | 删除帖子 | 是 |
 | 帖子 | GET | `/api/users/{userId}/posts` | 用户帖子列表 | 否 |
-| 热榜 | GET | `/api/posts/hot` | 热门帖子榜 | 否 |
+| 帖子 | GET | `/api/posts/hot` | 热门帖子榜 | 否 |
 | 评论 | POST | `/api/posts/{postId}/comments` | 发表评论 | 是 |
 | 评论 | GET | `/api/posts/{postId}/comments` | 帖子评论列表 | 否 |
 | 评论 | DELETE | `/api/comments/{commentId}` | 删除评论 | 是 |
@@ -845,27 +803,45 @@ true
 | 管理 | PUT | `/api/admin/users/{userId}/disable` | 禁用用户 | 管理员 |
 | 管理 | PUT | `/api/admin/users/{userId}/enable` | 启用用户 | 管理员 |
 
-## 11. 后续实现建议
+## 11. 当前实现补充说明
 
-第一阶段先实现 MySQL 版本的同步接口，保证业务闭环。
+### 11.1 Redis
 
-第二阶段加入 Redis：
+项目中 Redis 目前主要用于两个方向：
 
-- 登录 token 或用户会话缓存
-- 热门帖子榜缓存
-- 帖子浏览量缓存
-- 点赞状态缓存
+- 登录 token 存储：默认使用内存版 `InMemoryTokenStore`；启用 Redis 配置后可以使用 `RedisTokenStore`。
+- 热门帖子缓存：默认使用 `NoOpHotPostCache`；启用 Redis 配置后使用 `RedisHotPostCache` 缓存热门帖子列表。
 
-第三阶段加入 RocketMQ：
+热门帖子缓存采用轻量 Cache Aside 实现：
 
-- 评论事件 `CommentEvent`
-- 点赞事件 `LikeEvent`
-- 消费事件生成站内通知
-- 异步更新帖子统计
+- 空结果也会写入缓存，减少无数据查询反复访问数据库。
+- 缓存 TTL 会增加随机抖动，降低同一批 key 同时过期造成的缓存雪崩风险。
+- 缓存未命中时使用 Redis 短期互斥锁，降低热点 key 失效后大量请求同时回源造成的缓存击穿风险。
 
-第四阶段补充 JUC 和 JVM 亮点：
+### 11.2 RocketMQ
 
-- 线程池批量刷新浏览量
-- 热榜定时计算任务
-- 压测后根据 GC 日志和 JVM 参数进行基础调优
+评论和点赞会发布领域事件：
 
+- `CommentCreatedEvent`
+- `PostLikedEvent`
+
+默认 profile 下使用同步事件发布器，便于本地开发和测试；启用 `rocketmq` profile 后，通过 RocketMQ 发送和消费事件，再生成站内通知。
+
+### 11.3 浏览量批量更新
+
+帖子详情接口调用后不会立即同步更新数据库浏览量，而是先记录到内存计数器，再由定时任务批量刷新到 `post_stat`。这样可以降低高频浏览请求对数据库的写压力。
+
+### 11.4 集成测试
+
+测试环境使用 H2 内存数据库和 `test` profile，核心接口集成测试覆盖：
+
+- 注册
+- 登录
+- 分类查询
+- 发帖
+- 评论
+- 点赞
+- 评论列表
+- 点赞状态
+- 未读通知数
+- 通知列表

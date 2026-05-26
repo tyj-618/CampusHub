@@ -1,0 +1,1342 @@
+CampusHub 项目开发流程与模块设计说明
+=====================================
+
+一、项目定位
+------------
+
+CampusHub 是一个轻量级校园论坛后端项目，面向实习简历场景设计。项目没有追求复杂的大型系统能力，而是围绕“校园论坛”这一明确业务场景，完整实现后端核心链路：
+
+1. 用户注册、登录、退出。
+2. 用户资料查看与修改。
+3. 分类查询。
+4. 帖子发布、列表、详情、编辑、删除、热门榜。
+5. 评论发布、查询、删除、我的评论。
+6. 点赞、取消点赞、点赞状态查询。
+7. 评论和点赞触发站内通知。
+8. 管理员处理帖子和用户。
+9. Redis 热门帖子缓存优化。
+10. RocketMQ 事件解耦扩展。
+11. 浏览量内存计数与定时批量刷库。
+12. REST API 文档、README、SQL 初始化脚本和集成测试。
+
+项目的核心目标是体现一个后端项目从业务建模、接口设计、分层编码、异常处理、数据访问、缓存优化、事件解耦到测试验证的完整开发过程。
+
+
+二、整体开发流程
+----------------
+
+1. 明确业务目标
+
+项目最初目标是实现一个校园论坛后端。论坛类项目最核心的业务对象是用户、帖子、评论、点赞和通知。因此开发时先确定核心业务闭环：
+
+用户注册登录 -> 发布帖子 -> 其他用户评论/点赞 -> 帖子作者收到通知 -> 管理员可以处理违规内容。
+
+这样设计的好处是功能范围清楚，既不会太空，也不会膨胀成难以维护的大系统。
+
+2. 确定技术栈
+
+项目采用：
+
+- Spring Boot：负责项目启动、依赖注入和 Web 服务。
+- Spring Web：实现 REST API。
+- Spring Validation：处理请求参数校验。
+- Spring JDBC：直接操作 MySQL，保持项目轻量。
+- MySQL：保存用户、帖子、评论、点赞、通知等核心数据。
+- Redis：可选启用，用于 token 存储和热门帖子缓存。
+- RocketMQ：可选启用，用于评论、点赞事件异步通知。
+- JUC：用 ConcurrentHashMap、LongAdder、ScheduledExecutorService 实现浏览量批量刷库。
+- H2：测试环境内存数据库。
+- JUnit / Spring Boot Test：集成测试。
+- BCrypt：密码加密。
+
+3. 设计分层架构
+
+每个业务模块基本遵循：
+
+Controller -> Service -> Repository -> Database
+
+其中：
+
+- Controller 负责接收 HTTP 请求，读取路径参数、查询参数、请求体、请求头。
+- Service 负责业务规则，例如是否登录、资源是否存在、是否有权限、是否需要发送事件。
+- Repository 负责 SQL 和数据库访问。
+- Request / Response record 负责定义请求体和响应体结构。
+- common 和 exception 模块负责统一响应、错误码和异常处理。
+
+这种分层适合个人项目：简单、清楚、容易解释，也便于后续扩展。
+
+4. 建立通用响应和异常体系
+
+项目先设计 ApiResponse、ErrorCode、BusinessException 和 GlobalExceptionHandler。
+
+这样 Controller 中正常情况下只需要返回 ApiResponse.success(...)，业务失败时抛出 BusinessException，由全局异常处理器统一转换成响应。
+
+这个设计解决两个问题：
+
+- 接口返回格式统一。
+- 业务代码不用到处手写失败响应。
+
+5. 实现认证模块
+
+认证模块先实现注册、登录、退出，再抽象 TokenStore。
+
+TokenStore 有两种实现：
+
+- InMemoryTokenStore：默认开发环境使用，不依赖 Redis。
+- RedisTokenStore：启用 redis profile 后使用，适合部署和多实例扩展。
+
+这样项目默认简单可运行，同时又能体现 Redis 扩展能力。
+
+6. 实现用户、分类、帖子模块
+
+用户模块负责当前用户资料和公开主页。
+
+分类模块负责返回启用分类。
+
+帖子模块是核心模块，包含发布、列表、详情、编辑、删除、用户帖子、热门帖子。帖子模块中还引入了 PostStat 表，用于保存浏览数、点赞数、评论数和热度分。
+
+7. 实现评论、点赞、通知模块
+
+评论和点赞都会影响帖子统计数据，也会触发通知。
+
+为了避免评论/点赞模块直接强依赖通知实现，后续引入了 event 模块：
+
+- 默认情况下使用 SyncDomainEventPublisher 同步生成通知。
+- 启用 rocketmq profile 后使用 RocketMqDomainEventPublisher 发送事件，再由 RocketMqEventConsumer 消费事件生成通知。
+
+这样实现了从同步调用到异步事件的平滑扩展。
+
+8. 实现管理模块
+
+管理模块提供隐藏/恢复帖子、禁用/启用用户能力。管理员权限在 Service 层判断，而不是只依赖 Controller。
+
+这样可以体现资源级权限控制：业务规则靠 Service 保证。
+
+9. 加入 Redis 热门帖子缓存优化
+
+热门帖子接口适合使用缓存，因为它读多写少，结果可短时间复用。
+
+项目使用 Cache Aside 模式：
+
+先查缓存 -> 命中直接返回 -> 未命中查数据库 -> 写入缓存 -> 返回结果。
+
+为了提升面试竞争力，又加入轻量级缓存保护：
+
+- 缓存雪崩：TTL 增加随机抖动。
+- 缓存击穿：缓存未命中时使用 Redis 短期互斥锁。
+- 缓存穿透：合法但无数据的结果也缓存为空列表；非法分类先在业务层校验并直接返回 404。
+
+10. 加入浏览量批量刷库
+
+帖子详情访问频率可能较高，如果每次访问都同步更新 MySQL，会造成写压力。
+
+项目使用：
+
+- ConcurrentHashMap<Long, LongAdder> 保存待刷新的浏览量。
+- ScheduledExecutorService 定时把内存计数刷入数据库。
+
+这体现了 JUC 在实际业务中的应用。
+
+11. 编写接口文档和 README
+
+接口文档位于 docs/api/REST_API.md，说明每个接口的路径、方法、参数和响应。
+
+README 说明项目定位、功能模块、技术栈、启动方式、Redis/RocketMQ 可选配置、测试方式和后续优化方向。
+
+12. 编写测试
+
+测试使用 H2 内存数据库，不依赖本地 MySQL、Redis、RocketMQ。
+
+测试覆盖：
+
+- Spring Boot 上下文启动。
+- 注册、登录、分类、发帖、评论、点赞、通知主流程。
+- 未登录发帖。
+- 重复注册。
+- 非法分页参数。
+- 普通用户访问管理员接口。
+- 重复点赞和重复取消点赞。
+
+测试保证项目不是只靠手动调接口，而是有自动化验证。
+
+
+三、通用模块设计
+----------------
+
+1. CampusHubApplication
+
+位置：com.tyj.campushub.CampusHubApplication
+
+功能：
+
+- Spring Boot 项目启动类。
+
+方法：
+
+- main(String[] args)：调用 SpringApplication.run(...) 启动整个后端应用。
+
+2. ApiResponse<T>
+
+位置：common.ApiResponse
+
+功能：
+
+- 定义统一接口响应结构。
+- 所有 Controller 返回值最终都包装成 code、message、data 三个字段。
+
+字段：
+
+- code：业务状态码。
+- message：响应说明。
+- data：响应数据。
+
+方法：
+
+- success(T data)：生成成功响应，code 固定为 0，message 固定为 success。
+- fail(Integer code, String message)：生成失败响应，data 固定为 null。
+
+3. ErrorCode
+
+位置：common.ErrorCode
+
+功能：
+
+- 枚举项目中的通用错误码和错误信息。
+
+主要枚举：
+
+- PARAM_ERROR：请求参数错误。
+- AUTH_FAILED：用户名或密码错误。
+- USERNAME_EXISTS：用户名已存在。
+- UNAUTHORIZED：未登录或 token 无效。
+- FORBIDDEN：无权限。
+- NOT_FOUND：资源不存在。
+- CONFLICT：资源状态冲突。
+- INTERNAL_ERROR：系统内部错误。
+
+方法：
+
+- code()：返回错误码数值。
+- message()：返回错误信息。
+
+4. PageResponse<T>
+
+位置：common.PageResponse
+
+功能：
+
+- 定义分页接口统一响应结构。
+
+字段：
+
+- page：当前页码。
+- size：每页数量。
+- total：总记录数。
+- pages：总页数。
+- records：当前页数据列表。
+
+方法：
+
+- of(int page, int size, long total, List<T> records)：根据分页参数和总数计算 pages，并生成分页响应。
+
+5. BusinessException
+
+位置：exception.BusinessException
+
+功能：
+
+- 项目自定义业务异常。
+- 将 ErrorCode 和 RuntimeException 绑定起来。
+
+字段：
+
+- errorCode：保存业务错误类型。
+
+方法：
+
+- BusinessException(ErrorCode errorCode)：使用枚举默认 message 创建异常。
+- BusinessException(ErrorCode errorCode, String message)：使用自定义 message 创建异常。
+- getErrorCode()：返回错误码枚举。
+
+6. GlobalExceptionHandler
+
+位置：exception.GlobalExceptionHandler
+
+功能：
+
+- 全局异常处理器。
+- 将异常统一转换为 ApiResponse 失败响应。
+
+方法：
+
+- handleBusinessException(BusinessException exception)：处理业务异常，返回异常中携带的错误码和 message。
+- handleValidationException(Exception exception)：处理参数校验异常，返回 PARAM_ERROR。
+- handleException(Exception exception)：处理未知异常，记录错误日志，并返回 INTERNAL_ERROR。
+
+
+四、认证模块设计
+----------------
+
+模块位置：auth
+
+模块职责：
+
+- 用户注册。
+- 用户登录。
+- 用户退出。
+- 密码加密。
+- token 生成、存储、解析。
+- 当前登录用户识别。
+
+1. AuthController
+
+功能：
+
+- 提供认证相关 REST API。
+
+方法：
+
+- register(RegisterRequest request)：处理 POST /api/auth/register，调用 AuthService.register 注册用户。
+- login(LoginRequest request)：处理 POST /api/auth/login，调用 AuthService.login 登录并返回 token。
+- logout(String authorization)：处理 POST /api/auth/logout，从 Authorization 请求头中读取 token 并退出登录。
+
+2. AuthService
+
+功能：
+
+- 处理认证业务逻辑。
+
+方法：
+
+- register(RegisterRequest request)：校验用户名是否重复，使用 PasswordEncoder 加密密码，保存用户，返回注册结果。捕获 DuplicateKeyException 防止并发注册同名用户。
+- login(LoginRequest request)：按用户名查询用户，校验用户状态和密码，创建 token 会话，返回 LoginResponse。
+- logout(String authorization)：解析 Bearer token，并从 TokenStore 中移除 token。
+
+3. AuthRepository
+
+功能：
+
+- 访问 user 表中的认证相关数据。
+
+方法：
+
+- existsByUsername(String username)：判断用户名是否已存在。
+- save(String username, String encodedPassword, String nickname)：保存新用户。
+- findByUsername(String username)：按用户名查询登录所需用户信息。
+
+4. AuthUser
+
+功能：
+
+- Repository 查询出来的认证用户数据。
+
+字段：
+
+- id、username、password、nickname、avatarUrl、role、status。
+
+5. RegisterRequest
+
+功能：
+
+- 用户注册请求体。
+
+字段和校验：
+
+- username：不能为空，长度 3-32，只能包含字母、数字、下划线。
+- password：不能为空，长度 6-32。
+- nickname：不能为空，最长 32。
+
+6. RegisterResponse
+
+功能：
+
+- 用户注册响应体。
+
+字段：
+
+- userId、username、nickname。
+
+7. LoginRequest
+
+功能：
+
+- 用户登录请求体。
+
+字段：
+
+- username：不能为空。
+- password：不能为空。
+
+8. LoginResponse
+
+功能：
+
+- 用户登录响应体。
+
+字段：
+
+- token：登录 token。
+- expiresIn：token 有效期秒数。
+- user：登录用户摘要。
+
+9. UserSummary
+
+功能：
+
+- 登录响应中的用户摘要。
+
+字段：
+
+- id、username、nickname、avatarUrl、role。
+
+10. TokenSession
+
+功能：
+
+- 表示一次登录会话。
+
+字段：
+
+- token：登录令牌。
+- userId：用户 ID。
+- expiresIn：有效期秒数。
+
+11. TokenStore
+
+功能：
+
+- token 存储接口，屏蔽内存实现和 Redis 实现差异。
+
+方法：
+
+- createSession(Long userId)：为指定用户创建登录会话。
+- findUserId(String token)：根据 token 查询用户 ID。
+- remove(String token)：移除 token。
+- resolveBearerToken(String authorization)：从 Authorization 请求头中解析 Bearer token。
+
+12. InMemoryTokenStore
+
+功能：
+
+- 默认 token 存储实现，不依赖 Redis。
+- 使用 ConcurrentHashMap 保存 token。
+
+方法：
+
+- createSession(Long userId)：生成 token，计算过期时间，写入内存 Map。
+- findUserId(String token)：查询 token，若过期则删除并返回空。
+- remove(String token)：删除 token。
+
+内部记录：
+
+- StoredToken：保存 userId 和 expiresAt。
+
+13. RedisTokenStore
+
+功能：
+
+- Redis token 存储实现，启用 redis profile 时生效。
+
+方法：
+
+- createSession(Long userId)：生成 token，并用 Redis string 写入 token -> userId，设置 2 小时 TTL。
+- findUserId(String token)：从 Redis 查询 token 对应的用户 ID。
+- remove(String token)：删除 Redis 中的 token key。
+- buildTokenKey(String token)：生成 Redis key。
+
+14. TokenGenerator
+
+功能：
+
+- 生成安全随机 token。
+
+方法：
+
+- generate()：使用 SecureRandom 生成随机字节，并编码为 URL 安全字符串。
+
+15. CurrentUserService
+
+功能：
+
+- 从请求头中识别当前登录用户。
+
+方法：
+
+- requireUserId(String authorization)：必须登录，否则抛出 UNAUTHORIZED。
+- findUserId(String authorization)：尝试解析当前用户，未登录时返回 Optional.empty()。
+
+16. PasswordConfig
+
+功能：
+
+- 提供 PasswordEncoder Bean。
+
+方法：
+
+- passwordEncoder()：返回 BCryptPasswordEncoder，用于密码加密和校验。
+
+
+五、用户模块设计
+----------------
+
+模块位置：user
+
+模块职责：
+
+- 当前用户资料查询。
+- 当前用户资料修改。
+- 用户公开主页查询。
+
+1. UserController
+
+方法：
+
+- getCurrentUser(String authorization)：处理 GET /api/users/me，返回当前登录用户资料。
+- updateCurrentUser(String authorization, UpdateUserProfileRequest request)：处理 PUT /api/users/me，修改当前用户资料。
+- getUserProfile(Long userId)：处理 GET /api/users/{userId}，返回用户公开主页。
+
+2. UserService
+
+方法：
+
+- getCurrentUser(String authorization)：获取当前登录用户 ID，查询用户资料并转换为 UserProfileResponse。
+- updateCurrentUser(String authorization, UpdateUserProfileRequest request)：清理昵称、头像、简介字段，更新用户资料后重新查询返回。
+- getPublicUserProfile(Long userId)：查询用户基本信息，并统计帖子数、评论数，返回公开主页响应。
+- findExistingUser(Long userId)：查询用户，不存在则抛出 NOT_FOUND。
+- cleanOrDefault(String value, String defaultValue)：清理字符串；为空时使用默认值。
+- cleanOrNull(String value)：清理字符串；为空时返回 null。
+
+3. UserRepository
+
+方法：
+
+- findProfileById(Long userId)：按 ID 查询用户资料。
+- updateProfile(Long userId, String nickname, String avatarUrl, String bio)：更新用户资料。
+- countNormalPostsByUserId(Long userId)：统计用户正常帖子数量。
+- countNormalCommentsByUserId(Long userId)：统计用户正常评论数量。
+
+4. UserProfile
+
+功能：
+
+- 用户资料数据库模型。
+
+字段：
+
+- id、username、nickname、avatarUrl、bio、role、status、createdAt、updatedAt。
+
+5. UserProfileResponse
+
+功能：
+
+- 当前用户资料响应。
+
+方法：
+
+- from(UserProfile userProfile)：将数据库模型转换为响应体。
+
+6. PublicUserProfileResponse
+
+功能：
+
+- 用户公开主页响应。
+
+字段：
+
+- id、username、nickname、avatarUrl、bio、postCount、commentCount、createdAt。
+
+7. UpdateUserProfileRequest
+
+功能：
+
+- 修改用户资料请求体。
+
+字段：
+
+- nickname：最长 32。
+- avatarUrl：最长 255。
+- bio：最长 255。
+
+
+六、分类模块设计
+----------------
+
+模块位置：category
+
+模块职责：
+
+- 查询启用分类列表。
+
+1. CategoryController
+
+方法：
+
+- listCategories()：处理 GET /api/categories，返回分类列表。
+
+2. CategoryService
+
+方法：
+
+- listEnabledCategories()：查询启用分类，并转换为 CategoryResponse。
+
+3. CategoryRepository
+
+方法：
+
+- findEnabledCategories()：查询 status = 0 的分类，按 sort_order 升序排列。
+
+4. Category
+
+功能：
+
+- 分类数据库模型。
+
+字段：
+
+- id、name、code、sortOrder、status、createdAt、updatedAt。
+
+5. CategoryResponse
+
+功能：
+
+- 分类响应体。
+
+方法：
+
+- from(Category category)：将 Category 转换为 CategoryResponse。
+
+
+七、帖子模块设计
+----------------
+
+模块位置：post
+
+模块职责：
+
+- 帖子发布。
+- 帖子列表。
+- 帖子详情。
+- 帖子编辑。
+- 帖子删除。
+- 用户帖子列表。
+- 热门帖子榜。
+- 热门帖子缓存。
+- 浏览量批量刷新。
+
+1. PostController
+
+方法：
+
+- createPost(String authorization, CreatePostRequest request)：处理 POST /api/posts，发布帖子。
+- listPosts(int page, int size, Long categoryId, String keyword, String sort)：处理 GET /api/posts，分页查询帖子。
+- getPostDetail(Long postId, String authorization)：处理 GET /api/posts/{postId}，查询帖子详情。
+- updatePost(Long postId, String authorization, UpdatePostRequest request)：处理 PUT /api/posts/{postId}，编辑帖子。
+- deletePost(Long postId, String authorization)：处理 DELETE /api/posts/{postId}，软删除帖子。
+- listUserPosts(Long userId, int page, int size)：处理 GET /api/users/{userId}/posts，查询用户帖子。
+- listHotPosts(int limit, Long categoryId)：处理 GET /api/posts/hot，查询热门帖子。
+
+2. PostService
+
+方法：
+
+- createPost(String authorization, CreatePostRequest request)：校验登录、校验分类，保存帖子和 post_stat。
+- listPosts(int page, int size, Long categoryId, String keyword, String sort)：校验分类后分页查询帖子。
+- getPostDetail(Long postId, String authorization)：查询帖子详情，记录浏览量，并判断当前用户是否点赞。
+- listUserPosts(Long userId, int page, int size)：校验用户存在后查询用户帖子。
+- listHotPosts(int limit, Long categoryId)：校验分类后通过 HotPostCache 获取热门帖子。
+- loadHotPosts(int limit, Long categoryId)：从数据库加载热门帖子并转换响应。
+- updatePost(Long postId, String authorization, UpdatePostRequest request)：校验登录、帖子存在、权限和分类后更新帖子。
+- deletePost(Long postId, String authorization)：校验登录、帖子存在和权限后软删除帖子。
+- findNormalPost(Long postId)：查询正常帖子，不存在或非正常状态则抛出 NOT_FOUND。
+- ensureEnabledCategory(Long categoryId)：校验分类存在且启用。
+- ensureCanManagePost(Long currentUserId, Long postAuthorId)：校验是否为作者或管理员。
+
+3. PostRepository
+
+方法：
+
+- existsEnabledCategory(Long categoryId)：判断分类是否存在且启用。
+- savePost(Long userId, CreatePostRequest request)：保存帖子并返回自增 ID。
+- savePostStat(Long postId)：为新帖子创建统计记录。
+- findDetailById(Long postId)：查询帖子详情，包括分类、作者、统计信息。
+- increaseViewCount(Long postId)：同步增加浏览量，保留为简单更新方法。
+- findPosts(int page, int size, Long categoryId, String keyword, String sort)：分页查询帖子列表。
+- findPostsByUserId(Long userId, int page, int size)：分页查询指定用户帖子。
+- findHotPosts(int limit, Long categoryId)：查询热门帖子。
+- updatePost(Long postId, UpdatePostRequest request)：更新帖子分类、标题、正文。
+- softDeletePost(Long postId)：将帖子 status 更新为 1。
+- existsLike(Long postId, Long userId)：判断用户是否点赞该帖子。
+- countPosts(String whereClause, List<Object> params)：统计列表总数。
+- buildListSql(String whereClause, String orderBy)：构造列表查询 SQL。
+- buildPostWhereClause(...)：根据分类、关键词、用户 ID 拼接 where 条件。
+- mapPostListItem(...)：将 ResultSet 映射为 PostListItem。
+
+4. CreatePostRequest
+
+字段：
+
+- categoryId：必填。
+- title：必填，最长 100。
+- content：必填，最长 5000。
+
+5. UpdatePostRequest
+
+字段：
+
+- categoryId：必填。
+- title：必填，最长 100。
+- content：必填，最长 5000。
+
+6. CreatePostResponse
+
+字段：
+
+- postId：新帖子 ID。
+
+7. PostDetail
+
+功能：
+
+- 帖子详情数据库模型。
+
+字段包括：
+
+- 帖子 ID、作者 ID、分类 ID、标题、内容、状态、时间、分类名称、作者信息、浏览数、点赞数、评论数、热度分。
+
+8. PostDetailResponse
+
+方法：
+
+- from(PostDetail postDetail, boolean liked)：将帖子详情模型转换为接口响应，并附加当前用户是否点赞。
+
+9. PostListItem
+
+功能：
+
+- 帖子列表数据库模型。
+
+字段包括：
+
+- 帖子、分类、作者、统计和创建时间。
+
+10. PostListItemResponse
+
+方法：
+
+- from(PostListItem item)：将列表模型转换为响应体。
+- buildSummary(String content)：生成帖子摘要，超过 80 字截断。
+
+11. PostHotItemResponse
+
+方法：
+
+- from(PostListItem item)：将热门帖子模型转换为热门榜响应。
+
+12. PostAuthorResponse
+
+功能：
+
+- 帖子作者响应对象。
+
+字段：
+
+- id、nickname、avatarUrl。
+
+13. PostCategoryResponse
+
+功能：
+
+- 帖子分类响应对象。
+
+字段：
+
+- id、name、code。
+
+14. PageQueryResult<T>
+
+功能：
+
+- Repository 层分页查询结果。
+
+字段：
+
+- total、records。
+
+15. HotPostCache
+
+功能：
+
+- 热门帖子缓存接口。
+
+方法：
+
+- get(int limit, Long categoryId)：查询缓存。
+- put(int limit, Long categoryId, List<PostHotItemResponse> hotPosts)：写入缓存。
+- getOrLoad(...)：缓存命中直接返回；未命中时调用 loader 加载并写入缓存。
+
+16. NoOpHotPostCache
+
+功能：
+
+- 默认缓存实现，不启用 Redis 时使用。
+
+方法：
+
+- get(...)：始终返回 Optional.empty()。
+- put(...)：空实现。
+- getOrLoad(...)：直接调用 loader，不做缓存。
+
+17. RedisHotPostCache
+
+功能：
+
+- Redis 热门帖子缓存实现。
+- 处理缓存雪崩、击穿、穿透相关轻量优化。
+
+方法：
+
+- get(...)：读取 Redis 缓存并反序列化；如果 JSON 损坏则删除缓存。
+- put(...)：序列化热门帖子列表并写入 Redis，TTL 使用随机抖动。
+- getOrLoad(...)：缓存未命中时尝试获取 Redis 短期互斥锁；拿到锁的请求回源数据库并写缓存；没拿到锁的请求短暂等待后再查缓存。
+- buildKey(...)：生成热门帖子缓存 key。
+- buildLockKey(...)：生成互斥锁 key。
+- ttlWithJitter()：返回基础 TTL + 随机秒数，缓解缓存雪崩。
+- releaseLock(...)：释放当前请求持有的锁。
+- sleepBriefly()：未拿到锁时短暂等待。
+
+18. ViewCountService
+
+功能：
+
+- 浏览量内存计数与定时批量刷库。
+
+方法：
+
+- recordView(Long postId)：记录一次浏览，使用 LongAdder 累加。
+- flushPendingViews()：将内存中待更新的浏览量批量写入数据库。
+- afterPropertiesSet()：Spring Bean 初始化后启动定时任务。
+- destroy()：应用关闭时停止调度器并执行最后一次刷库。
+- flushSafely()：包装 flushPendingViews，避免定时任务异常中断。
+
+19. ViewCountRepository
+
+方法：
+
+- increaseViewCount(Long postId, long delta)：按增量更新 post_stat 中的 view_count 和 hot_score。
+
+
+八、评论模块设计
+----------------
+
+模块位置：comment
+
+模块职责：
+
+- 发表评论。
+- 查询帖子评论。
+- 删除评论。
+- 查询我的评论。
+- 评论后更新帖子统计并发布评论事件。
+
+1. CommentController
+
+方法：
+
+- createComment(Long postId, String authorization, CreateCommentRequest request)：处理 POST /api/posts/{postId}/comments。
+- listPostComments(Long postId, int page, int size)：处理 GET /api/posts/{postId}/comments。
+- deleteComment(Long commentId, String authorization)：处理 DELETE /api/comments/{commentId}。
+- listMyComments(String authorization, int page, int size)：处理 GET /api/users/me/comments。
+
+2. CommentService
+
+方法：
+
+- createComment(...)：校验登录和帖子，保存评论，增加评论数，发布 CommentCreatedEvent。
+- listPostComments(...)：校验帖子存在，分页查询评论并转换响应。
+- deleteComment(...)：校验登录、评论存在和删除权限，软删除评论并扣减评论数。
+- listMyComments(...)：查询当前用户的评论列表。
+- ensureNormalPost(Long postId)：校验帖子正常。
+- findNormalPost(Long postId)：查询正常帖子详情。
+- findNormalComment(Long commentId)：查询正常评论。
+- ensureCanDeleteComment(...)：校验评论作者、帖子作者或管理员权限。
+
+3. CommentRepository
+
+方法：
+
+- existsNormalPost(Long postId)：判断帖子是否正常存在。
+- saveComment(Long postId, Long userId, String content)：保存评论并返回评论 ID。
+- increaseCommentCount(Long postId)：增加评论数和热度分。
+- decreaseCommentCount(Long postId)：减少评论数和热度分。
+- findCommentsByPostId(Long postId, int page, int size)：分页查询帖子评论。
+- findCommentsByUserId(Long userId, int page, int size)：分页查询用户自己的评论。
+- findDetailById(Long commentId)：查询评论详情，包括帖子作者 ID。
+- softDeleteComment(Long commentId)：软删除评论。
+- mapCommentPageItem(...)：ResultSet 转 CommentPageItem。
+
+4. CreateCommentRequest
+
+字段：
+
+- content：必填，最长 500。
+
+5. CreateCommentResponse
+
+字段：
+
+- commentId：新评论 ID。
+
+6. CommentDetail
+
+功能：
+
+- 评论详情数据库模型。
+
+字段：
+
+- id、postId、userId、postAuthorId、content、status、createdAt、updatedAt。
+
+7. CommentPageItem
+
+功能：
+
+- 评论列表数据库模型。
+
+字段：
+
+- id、postId、userId、content、authorNickname、authorAvatarUrl、createdAt。
+
+8. CommentResponse
+
+方法：
+
+- from(CommentPageItem item)：将评论列表模型转换为接口响应。
+
+9. MyCommentItem
+
+功能：
+
+- 我的评论数据库模型。
+
+字段：
+
+- id、postId、postTitle、content、createdAt。
+
+10. MyCommentResponse
+
+方法：
+
+- from(MyCommentItem item)：将我的评论模型转换为响应体。
+
+
+九、点赞模块设计
+----------------
+
+模块位置：like
+
+模块职责：
+
+- 点赞帖子。
+- 取消点赞。
+- 查询点赞状态。
+- 更新帖子点赞数和热度分。
+- 点赞后发布事件生成通知。
+
+1. LikeController
+
+方法：
+
+- likePost(Long postId, String authorization)：处理 POST /api/posts/{postId}/like。
+- unlikePost(Long postId, String authorization)：处理 DELETE /api/posts/{postId}/like。
+- getLikeStatus(Long postId, String authorization)：处理 GET /api/posts/{postId}/like。
+
+2. LikeService
+
+方法：
+
+- likePost(Long postId, String authorization)：校验登录和帖子；如果已点赞直接返回；否则新增或激活点赞记录，增加点赞数并发布 PostLikedEvent。
+- unlikePost(Long postId, String authorization)：校验登录和帖子；如果未点赞直接返回；否则取消点赞并扣减点赞数。
+- getLikeStatus(Long postId, String authorization)：查询当前用户是否点赞。
+- ensureNormalPost(Long postId)：校验帖子正常存在。
+- findNormalPost(Long postId)：查询正常帖子详情。
+
+3. LikeRepository
+
+方法：
+
+- existsNormalPost(Long postId)：判断帖子是否正常存在。
+- findByPostIdAndUserId(Long postId, Long userId)：查询点赞记录。
+- saveLike(Long postId, Long userId)：新增点赞记录。
+- activateLike(Long likeId)：将取消状态改回已点赞。
+- cancelLike(Long likeId)：取消点赞。
+- increaseLikeCount(Long postId)：增加点赞数和热度分。
+- decreaseLikeCount(Long postId)：减少点赞数和热度分。
+- findLikeCount(Long postId)：查询帖子点赞数。
+
+4. LikeRecord
+
+字段：
+
+- id、postId、userId、status。
+
+5. LikeResponse
+
+字段：
+
+- liked：当前是否点赞。
+- likeCount：当前点赞数。
+
+6. LikeStatusResponse
+
+字段：
+
+- liked：当前用户是否点赞。
+
+
+十、通知模块设计
+----------------
+
+模块位置：notice
+
+模块职责：
+
+- 保存评论通知和点赞通知。
+- 查询通知列表。
+- 查询未读数。
+- 标记单条通知已读。
+- 标记全部通知已读。
+
+1. NoticeController
+
+方法：
+
+- listNotices(String authorization, int page, int size, Integer readStatus)：处理 GET /api/notices。
+- countUnreadNotices(String authorization)：处理 GET /api/notices/unread-count。
+- markNoticeRead(Long noticeId, String authorization)：处理 PUT /api/notices/{noticeId}/read。
+- markAllNoticesRead(String authorization)：处理 PUT /api/notices/read-all。
+
+2. NoticeService
+
+方法：
+
+- createCommentNotice(Long receiverId, Long senderId, Long postId, Long commentId)：创建评论通知；如果自己评论自己则不通知。
+- createLikeNotice(Long receiverId, Long senderId, Long postId)：创建点赞通知；如果自己点赞自己则不通知。
+- listNotices(...)：校验登录和 readStatus，分页查询通知。
+- countUnreadNotices(String authorization)：查询未读通知数。
+- markNoticeRead(Long noticeId, String authorization)：校验通知属于当前用户后标记已读。
+- markAllNoticesRead(String authorization)：标记当前用户全部通知已读。
+- validateReadStatus(Integer readStatus)：校验 readStatus 只能是 0 或 1。
+
+3. NoticeRepository
+
+方法：
+
+- saveNotice(CreateNoticeCommand command)：保存通知。
+- findNoticesByReceiverId(...)：分页查询当前用户通知。
+- countUnreadByReceiverId(Long receiverId)：统计未读通知数。
+- markRead(Long noticeId, Long receiverId)：标记单条通知已读。
+- markAllRead(Long receiverId)：标记全部通知已读。
+- existsByIdAndReceiverId(Long noticeId, Long receiverId)：判断通知是否属于当前用户。
+- buildWhereClause(...)：根据 receiverId 和 readStatus 构造查询条件。
+
+4. CreateNoticeCommand
+
+字段：
+
+- receiverId、senderId、postId、commentId、type、content。
+
+5. NoticeItem
+
+功能：
+
+- 通知列表数据库模型。
+
+字段：
+
+- id、senderId、senderNickname、senderAvatarUrl、postId、commentId、type、content、readStatus、createdAt。
+
+6. NoticeResponse
+
+方法：
+
+- from(NoticeItem item)：将通知数据库模型转换为响应体。
+
+7. UnreadNoticeCountResponse
+
+字段：
+
+- count：未读通知数。
+
+8. UpdateNoticeCountResponse
+
+字段：
+
+- updatedCount：本次标记已读的数量。
+
+
+十一、管理模块设计
+------------------
+
+模块位置：admin
+
+模块职责：
+
+- 管理员隐藏帖子。
+- 管理员恢复帖子。
+- 管理员禁用用户。
+- 管理员启用用户。
+
+1. AdminController
+
+方法：
+
+- hidePost(Long postId, String authorization)：处理 PUT /api/admin/posts/{postId}/hide。
+- restorePost(Long postId, String authorization)：处理 PUT /api/admin/posts/{postId}/restore。
+- disableUser(Long userId, String authorization)：处理 PUT /api/admin/users/{userId}/disable。
+- enableUser(Long userId, String authorization)：处理 PUT /api/admin/users/{userId}/enable。
+
+2. AdminService
+
+方法：
+
+- hidePost(Long postId, String authorization)：校验管理员权限和帖子存在，将帖子设为隐藏。
+- restorePost(Long postId, String authorization)：校验管理员权限和帖子存在，将帖子恢复正常。
+- disableUser(Long userId, String authorization)：校验管理员权限，禁止禁用自己，禁用目标用户。
+- enableUser(Long userId, String authorization)：校验管理员权限，启用目标用户。
+- requireAdmin(String authorization)：校验当前用户已登录、状态正常且 role = 1。
+- ensurePostExists(Long postId)：校验帖子存在。
+- ensureUserExists(Long userId)：校验用户存在。
+
+3. AdminRepository
+
+方法：
+
+- existsPost(Long postId)：判断帖子是否存在。
+- updatePostStatus(Long postId, int status)：更新帖子状态。
+- existsUser(Long userId)：判断用户是否存在。
+- updateUserStatus(Long userId, int status)：更新用户状态。
+
+
+十二、事件模块设计
+------------------
+
+模块位置：event
+
+模块职责：
+
+- 将评论、点赞和通知解耦。
+- 默认同步处理事件。
+- 启用 RocketMQ 后异步发布和消费事件。
+
+1. DomainEventPublisher
+
+功能：
+
+- 领域事件发布接口。
+
+方法：
+
+- publishCommentCreated(CommentCreatedEvent event)：发布评论创建事件。
+- publishPostLiked(PostLikedEvent event)：发布帖子点赞事件。
+
+2. CommentCreatedEvent
+
+字段：
+
+- receiverId：通知接收者。
+- senderId：触发评论的用户。
+- postId：帖子 ID。
+- commentId：评论 ID。
+
+3. PostLikedEvent
+
+字段：
+
+- receiverId：通知接收者。
+- senderId：触发点赞的用户。
+- postId：帖子 ID。
+
+4. SyncDomainEventPublisher
+
+功能：
+
+- 默认事件发布器，不启用 rocketmq profile 时生效。
+- 直接调用 NoticeService 同步生成通知。
+
+方法：
+
+- publishCommentCreated(...)：同步创建评论通知。
+- publishPostLiked(...)：同步创建点赞通知。
+
+5. RocketMqDomainEventPublisher
+
+功能：
+
+- RocketMQ 事件发布器，启用 rocketmq profile 时生效。
+
+方法：
+
+- publishCommentCreated(...)：发送评论事件到评论 Topic。
+- publishPostLiked(...)：发送点赞事件到点赞 Topic。
+
+6. RocketMqEventConsumer
+
+功能：
+
+- RocketMQ 消费者配置类。
+
+内部类：
+
+- CommentEventListener：监听评论事件，调用 NoticeService.createCommentNotice。
+- LikeEventListener：监听点赞事件，调用 NoticeService.createLikeNotice。
+
+
+十三、SQL 与配置设计
+--------------------
+
+1. schema.sql
+
+位置：src/main/resources/db/schema.sql
+
+功能：
+
+- 创建 campushub 数据库。
+- 创建 user、category、post、post_stat、comment、post_like、notice 表。
+- 为常用查询字段建立索引。
+
+2. data.sql
+
+位置：src/main/resources/db/data.sql
+
+功能：
+
+- 初始化分类数据。
+- 使用 ON DUPLICATE KEY UPDATE 保证重复执行时不会插入重复分类。
+
+3. application.yaml
+
+功能：
+
+- 配置服务端口。
+- 配置 MySQL 连接。
+- 配置 Redis 连接。
+- 配置热门帖子缓存 TTL 和 TTL 抖动。
+- 配置浏览量批量刷库间隔。
+
+4. application-rocketmq.yaml
+
+功能：
+
+- 配置 RocketMQ name-server。
+- 配置 producer group。
+- 配置评论事件 Topic 和点赞事件 Topic。
+
+5. application-test.yaml
+
+位置：src/test/resources/application-test.yaml
+
+功能：
+
+- 测试环境使用 H2 内存数据库。
+- 自动执行测试 schema.sql 和 data.sql。
+- 将浏览量刷库间隔调大，减少测试干扰。
+
+
+十四、测试模块设计
+------------------
+
+1. CampusHubApplicationTests
+
+功能：
+
+- 验证 Spring Boot 应用上下文可以启动。
+
+方法：
+
+- contextLoads()：空测试方法，重点是让 Spring Boot 完成上下文加载。
+
+2. CampusHubApiIntegrationTests
+
+功能：
+
+- 使用真实随机端口启动 Spring Boot 服务。
+- 使用 JDK HttpClient 发送 HTTP 请求。
+- 覆盖核心接口主流程和边界流程。
+
+主要测试：
+
+- campusHubCoreApiFlow()：
+  注册 alice 和 bob，登录，查询分类，alice 发帖，bob 评论和点赞，验证评论列表、点赞状态、未读通知数和通知列表。
+
+- campusHubCoreApiBoundaryFlow()：
+  验证未登录发帖、重复注册、非法分页、普通用户访问管理接口、重复点赞、重复取消点赞等边界场景。
+
+辅助方法：
+
+- register(...)：注册用户。
+- login(...)：登录并返回 token。
+- firstCategoryId()：获取第一个分类 ID。
+- createPost(...)：创建帖子并返回 postId。
+- createComment(...)：创建评论并返回 commentId。
+- likePost(...)：点赞帖子。
+- get(...)：发送 GET 请求。
+- put(...)：发送 PUT 请求。
+- delete(...)：发送 DELETE 请求。
+- post(...)：发送 POST 请求。
+- assertCode(...)：断言统一响应 code。
+- addAuthorization(...)：添加 Authorization 请求头。
+- url(...)：拼接测试服务 URL。
+- bearer(...)：拼接 Bearer token。
+
+
+十五、项目亮点总结
+------------------
+
+1. 业务完整
+
+项目实现了校园论坛核心闭环，不是孤立接口集合。
+
+2. 分层清晰
+
+Controller、Service、Repository、DTO、Exception、Config 分工明确。
+
+3. 接口规范
+
+统一 ApiResponse、统一 ErrorCode、统一异常处理、统一分页响应。
+
+4. 安全基础
+
+密码使用 BCrypt 加密，登录态通过 token 管理。
+
+5. Redis 有实际业务场景
+
+热门帖子缓存不是为了使用 Redis 而使用 Redis，而是针对读多写少的热门榜业务。
+
+6. 缓存问题有应对
+
+使用 TTL 抖动、互斥锁、空结果缓存应对缓存雪崩、击穿、穿透。
+
+7. RocketMQ 解耦清晰
+
+评论、点赞和通知通过事件接口解耦，默认同步，启用 RocketMQ 后异步。
+
+8. JUC 使用自然
+
+浏览量批量刷库使用 ConcurrentHashMap、LongAdder、ScheduledExecutorService，能讲清楚为什么减少数据库写压力。
+
+9. 测试完整
+
+使用 H2 和集成测试覆盖主流程和边界场景。
+
+10. 文档齐全
+
+README、REST API 文档、SQL 初始化脚本和本说明文档都已补齐。
+
+
+十六、面试中可以如何介绍
+------------------------
+
+可以这样概括项目：
+
+CampusHub 是一个轻量级校园论坛后端项目。我没有追求功能大而全，而是围绕论坛核心链路实现了用户认证、帖子、评论、点赞、通知和管理功能。项目采用 Spring Boot + JDBC + MySQL 分层开发，使用统一响应、全局异常处理和参数校验保证接口规范性。为了体现工程化能力，我加入了 Redis 热门帖子缓存，并通过 TTL 随机抖动、互斥锁和空结果缓存缓解缓存雪崩、击穿和穿透问题；同时用 RocketMQ 事件模型解耦评论、点赞和通知，用 JUC 对浏览量做内存累计和定时批量刷库。最后使用 H2 编写集成测试覆盖核心流程和边界场景，并补充了 REST API 文档和 README。
+

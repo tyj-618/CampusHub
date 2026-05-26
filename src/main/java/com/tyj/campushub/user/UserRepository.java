@@ -50,7 +50,7 @@ public class UserRepository {
     }
 
     public long countNormalCommentsByUserId(Long userId) {
-        String sql = "SELECT COUNT(*) FROM comment WHERE user_id = ? AND status = 0";
+        String sql = "SELECT COUNT(*) FROM `comment` WHERE user_id = ? AND status = 0";
         Long count = jdbcTemplate.queryForObject(sql, Long.class, userId);
         return count == null ? 0 : count;
     }

@@ -1,0 +1,1411 @@
+CampusHub 项目面试拷问手册
+===========================
+
+目录
+----
+
+一、项目整体介绍与面试定位
+二、业务设计拷问
+三、分层架构与 Spring Boot 原理
+四、REST API、参数校验与统一响应
+五、认证、Token 与密码安全
+六、MySQL、JDBC、事务与索引
+七、Redis 缓存设计与底层原理
+八、RocketMQ 事件解耦与消息队列原理
+九、JUC 浏览量批量刷库与并发原理
+十、异常处理、日志与可维护性
+十一、测试设计与 H2 集成测试
+十二、项目不足与可优化方向
+十三、模拟面试 Q&A
+
+
+一、项目整体介绍与面试定位
+--------------------------
+
+1. 项目一句话介绍
+
+CampusHub 是一个基于 Spring Boot 的轻量级校园论坛后端项目，围绕校园交流场景实现用户认证、帖子、评论、点赞、站内通知和管理员管理等核心功能，并补充 Redis 热门帖子缓存、RocketMQ 事件解耦、JUC 浏览量批量刷库、统一异常处理、接口文档和集成测试。
+
+2. 项目的合理定位
+
+这个项目适合定位为：
+
+- 个人实习简历项目。
+- 轻量级论坛后端项目。
+- 用于展示 Java 后端基础能力和工程化思维的项目。
+
+不建议夸大为：
+
+- 高并发企业级生产系统。
+- 分布式大型论坛平台。
+- 完整微服务系统。
+
+面试时主动说明项目定位，反而更稳：
+
+“这个项目不是为了做一个大而全的论坛平台，而是围绕论坛核心业务链路，完整实现一个后端项目从接口、业务、数据库、缓存、消息、并发优化到测试和文档的闭环。”
+
+3. 项目核心链路
+
+用户注册登录 -> 发布帖子 -> 其他用户评论或点赞 -> 触发事件 -> 生成站内通知 -> 管理员处理违规内容。
+
+4. 技术栈对应能力
+
+- Spring Boot / Spring Web：后端接口开发。
+- Spring Validation：参数校验。
+- Spring JDBC：数据库访问。
+- MySQL：关系型数据建模与查询。
+- Redis：Token 存储扩展、热门帖子缓存、防雪崩/击穿/穿透。
+- RocketMQ：评论/点赞事件与通知解耦。
+- JUC：浏览量内存计数和定时批量刷库。
+- BCrypt：密码加密。
+- H2 + JUnit：集成测试。
+- Markdown 文档：接口说明和项目说明。
+
+
+二、业务设计拷问
+----------------
+
+1. 为什么选择校园论坛作为项目？
+
+校园论坛业务边界清晰，核心实体明确，包括用户、帖子、评论、点赞、通知、分类、管理员。它能覆盖实习后端常见能力：登录鉴权、CRUD、分页查询、权限控制、消息通知、缓存、异步事件、测试与文档。
+
+2. 为什么项目没有做成微服务？
+
+项目定位是个人实习简历项目，目标是把后端主链路做完整，而不是引入过多架构复杂度。单体架构更适合当前规模：
+
+- 部署简单。
+- 调试方便。
+- 模块边界仍然清晰。
+- 更适合学习业务分层和基础技术。
+
+如果后续用户量和业务复杂度增加，可以拆分为用户服务、内容服务、互动服务、通知服务等。
+
+3. 为什么模块这么划分？
+
+项目按业务领域划分包：
+
+- auth：认证登录。
+- user：用户资料。
+- category：帖子分类。
+- post：帖子。
+- comment：评论。
+- like：点赞。
+- notice：通知。
+- admin：管理。
+- event：事件发布与消费。
+- common：通用响应和分页。
+- exception：异常处理。
+
+这样的划分比按技术层统一放 controller、service、repository 更适合中小项目。因为面向业务模块时，相关类集中在一起，开发和维护时更容易定位。
+
+4. 项目中的核心数据表有哪些？
+
+- user：用户表。
+- category：分类表。
+- post：帖子表。
+- post_stat：帖子统计表。
+- comment：评论表。
+- post_like：点赞表。
+- notice：通知表。
+
+其中 post 和 post_stat 分开设计，是为了把帖子正文数据和统计数据拆开。帖子正文相对稳定，统计字段更新更频繁，拆表后逻辑更清楚，也方便后续针对统计数据做缓存或异步更新。
+
+5. 为什么使用软删除？
+
+帖子和评论删除使用 status 字段软删除，而不是直接物理删除。原因：
+
+- 可以保留数据，方便恢复或审计。
+- 避免级联删除导致评论、通知等关联数据混乱。
+- 业务上“删除”通常是对普通用户不可见，而不是数据库立即消失。
+
+代价是查询时必须带上 status 条件，例如只查询 status = 0 的正常帖子。
+
+
+三、分层架构与 Spring Boot 原理
+-------------------------------
+
+1. 项目分层设计
+
+项目采用典型三层架构：
+
+Controller -> Service -> Repository
+
+Controller：
+
+- 接收 HTTP 请求。
+- 读取请求参数、请求体、请求头。
+- 调用 Service。
+- 返回 ApiResponse。
+
+Service：
+
+- 处理业务规则。
+- 校验登录、权限、资源状态。
+- 协调多个 Repository 或事件发布器。
+- 抛出 BusinessException。
+
+Repository：
+
+- 封装 SQL。
+- 与数据库交互。
+- 返回数据库模型或简单结果。
+
+DTO / record：
+
+- Request 定义请求体。
+- Response 定义响应体。
+- 数据库模型定义 Repository 查询结果。
+
+2. 为什么业务逻辑不写在 Controller？
+
+Controller 只负责 HTTP 层。把业务逻辑写在 Controller 会带来问题：
+
+- 接口层和业务层耦合。
+- 不方便复用业务逻辑。
+- 测试困难。
+- Controller 会越来越臃肿。
+
+Service 层负责业务规则，可以让 Controller 保持轻薄，也符合 Spring 项目的常见分层习惯。
+
+3. Spring Boot 启动原理
+
+项目入口是 CampusHubApplication：
+
+SpringApplication.run(CampusHubApplication.class, args)
+
+底层过程简化理解：
+
+- 创建 SpringApplication。
+- 准备 Environment，读取 application.yaml、profile、环境变量等配置。
+- 创建 ApplicationContext。
+- 扫描 @SpringBootApplication 所在包及子包。
+- 识别 @Component、@Service、@Repository、@Controller 等 Bean。
+- 执行自动配置。
+- 启动内嵌 Tomcat。
+- 注册 DispatcherServlet。
+- 应用开始接收 HTTP 请求。
+
+4. @SpringBootApplication 做了什么？
+
+@SpringBootApplication 是组合注解，主要包含：
+
+- @SpringBootConfiguration：标识这是 Spring Boot 配置类。
+- @EnableAutoConfiguration：开启自动配置。
+- @ComponentScan：扫描当前包及子包中的组件。
+
+5. Spring IoC 是什么？
+
+IoC 是控制反转。对象的创建和依赖关系不由程序员手动 new，而是交给 Spring 容器管理。
+
+例如 AuthService 需要 AuthRepository、PasswordEncoder、TokenStore：
+
+Spring 会创建这些 Bean，并通过构造方法注入给 AuthService。
+
+好处：
+
+- 降低耦合。
+- 便于替换实现，例如 TokenStore 可以是内存实现，也可以是 Redis 实现。
+- 便于测试。
+
+6. DI 是什么？
+
+DI 是依赖注入，是 IoC 的具体实现方式。
+
+项目主要使用构造器注入：
+
+public AuthService(AuthRepository authRepository, PasswordEncoder passwordEncoder, TokenStore tokenStore)
+
+构造器注入的优点：
+
+- 依赖明确。
+- Bean 创建后就是完整可用状态。
+- 便于写单元测试。
+- 避免字段注入隐藏依赖。
+
+7. @Service、@Repository、@RestController 的区别
+
+@Service：
+
+- 标记业务逻辑类。
+
+@Repository：
+
+- 标记数据访问类。
+- Spring 可以对数据库异常做统一转换。
+
+@RestController：
+
+- 等价于 @Controller + @ResponseBody。
+- 返回对象会被序列化为 JSON。
+
+8. Spring MVC 请求处理流程
+
+一次请求大致流程：
+
+客户端 -> Tomcat -> DispatcherServlet -> HandlerMapping -> Controller 方法 -> Service -> Repository -> 数据库 -> 返回对象 -> HttpMessageConverter 转 JSON -> 客户端。
+
+关键组件：
+
+- DispatcherServlet：前端控制器，所有请求入口。
+- HandlerMapping：根据 URL 找 Controller 方法。
+- HandlerAdapter：调用 Controller 方法。
+- HttpMessageConverter：负责 JSON 序列化/反序列化。
+
+
+四、REST API、参数校验与统一响应
+-------------------------------
+
+1. 什么是 REST API？
+
+REST 是一种接口设计风格，强调使用 HTTP 方法表达操作：
+
+- GET：查询。
+- POST：创建。
+- PUT：整体更新或明确动作更新。
+- DELETE：删除。
+
+项目示例：
+
+- POST /api/posts：发布帖子。
+- GET /api/posts：查询帖子列表。
+- GET /api/posts/{postId}：查询帖子详情。
+- DELETE /api/posts/{postId}：删除帖子。
+
+2. 为什么统一响应结构？
+
+项目统一使用：
+
+{
+  "code": 0,
+  "message": "success",
+  "data": {}
+}
+
+好处：
+
+- 前端处理逻辑统一。
+- 成功和失败结构一致。
+- 业务错误码可以和 HTTP 状态解耦。
+- 测试断言方便。
+
+3. 为什么不直接使用 HTTP 状态码表达所有错误？
+
+HTTP 状态码表达的是协议层结果，业务错误码表达的是业务层结果。
+
+本项目目前多数业务失败仍返回 HTTP 200，但 code 不为 0。这种方式在一些前后端分离项目中常见，前端统一看 code。
+
+如果生产项目更严格，也可以结合 HTTP 状态码：
+
+- 400 参数错误。
+- 401 未登录。
+- 403 无权限。
+- 404 资源不存在。
+- 500 系统错误。
+
+面试中可以说明当前项目选择统一业务 code 是为了简化前端处理和测试。
+
+4. @Valid 的作用
+
+@Valid 会触发 Jakarta Validation 校验。
+
+例如 RegisterRequest：
+
+- @NotBlank：不能为空字符串。
+- @Size：长度限制。
+- @Pattern：正则限制。
+
+如果校验失败，Spring 会抛出 MethodArgumentNotValidException，GlobalExceptionHandler 捕获后返回 PARAM_ERROR。
+
+5. Controller 中为什么通常只写 success？
+
+因为业务失败会在 Service 中抛出 BusinessException，全局异常处理器会统一处理。
+
+Controller 只处理正常路径：
+
+return ApiResponse.success(authService.login(request));
+
+异常路径交给 GlobalExceptionHandler。
+
+6. 参数校验底层原理
+
+Spring MVC 在解析 @RequestBody 时，会使用 HttpMessageConverter 将 JSON 转成 Java 对象。随后如果参数上有 @Valid，Spring 会调用 Validator 对对象字段进行校验。
+
+校验失败不会进入 Service，而是直接抛出异常。这就保证了 Service 收到的对象基本满足格式要求。
+
+
+五、认证、Token 与密码安全
+--------------------------
+
+1. 注册流程
+
+注册流程：
+
+- Controller 接收 RegisterRequest。
+- @Valid 校验用户名、密码、昵称。
+- AuthService 判断用户名是否存在。
+- PasswordEncoder 对密码加密。
+- AuthRepository 插入 user 表。
+- 查询新用户并返回 RegisterResponse。
+
+2. 登录流程
+
+登录流程：
+
+- 根据 username 查询用户。
+- 用户不存在则返回用户名或密码错误。
+- 用户被禁用则返回无权限。
+- BCrypt 校验密码。
+- TokenStore 创建 token 会话。
+- 返回 token、expiresIn 和用户摘要。
+
+3. 为什么密码不能明文存储？
+
+如果数据库泄露，明文密码会直接暴露用户隐私，并可能影响用户其他网站账号。
+
+因此密码必须使用不可逆哈希算法保存。
+
+4. BCrypt 原理
+
+BCrypt 是专门用于密码存储的哈希算法，特点：
+
+- 自动加盐。
+- 计算成本可调。
+- 同一个密码每次生成的密文不同。
+- 抗彩虹表攻击。
+
+加盐的作用：
+
+如果两个用户密码都是 123456，没有盐时哈希值相同；有盐时哈希值不同，攻击者无法简单通过预计算表批量破解。
+
+计算成本可调：
+
+BCrypt 会故意让计算变慢。这样正常登录影响不大，但攻击者暴力尝试大量密码的成本会显著增加。
+
+5. BCrypt 是加密还是哈希？
+
+严格说 BCrypt 是哈希，不是加密。
+
+加密通常可以解密回原文；哈希不可逆。登录时不是解密密码，而是用 passwordEncoder.matches(rawPassword, encodedPassword) 判断明文密码是否和哈希值匹配。
+
+6. TokenSession 中 expiresIn 是什么？
+
+expiresIn 表示 token 的有效期，单位是秒。本项目默认 2 小时，即 7200 秒。
+
+7. 为什么抽象 TokenStore？
+
+因为 token 存储方式可能变化：
+
+- 本地开发用内存 Map 即可。
+- 部署或多实例时需要 Redis。
+
+抽象 TokenStore 后，AuthService 不关心 token 存在哪里，只依赖接口。
+
+这是面向接口编程，也是策略模式思想。
+
+8. InMemoryTokenStore 的优缺点
+
+优点：
+
+- 简单。
+- 不依赖外部服务。
+- 适合本地开发和测试。
+
+缺点：
+
+- 应用重启后 token 全部失效。
+- 多实例部署时各实例之间 token 不共享。
+- 不适合生产集群。
+
+9. RedisTokenStore 的优缺点
+
+优点：
+
+- token 可设置 TTL 自动过期。
+- 多实例共享登录态。
+- 删除 token 即可退出登录。
+
+缺点：
+
+- 依赖 Redis 可用性。
+- 需要考虑 Redis 故障和网络问题。
+
+10. Bearer Token 解析逻辑
+
+Authorization 请求头格式：
+
+Authorization: Bearer <token>
+
+TokenStore.resolveBearerToken 会检查：
+
+- 请求头不能为 null。
+- 必须以 "Bearer " 开头。
+- 截取 token 后不能为空。
+
+如果不满足，返回 Optional.empty()。
+
+11. Optional 的作用
+
+Optional 表示一个值可能存在，也可能不存在。它比直接返回 null 更能表达语义，减少空指针风险。
+
+例如：
+
+findUserId(String authorization)：未登录时返回 Optional.empty()。
+
+12. 为什么禁用用户不能登录？
+
+AuthService.login 中检查 user.status() != 0 时抛出 FORBIDDEN。
+
+这体现了业务状态校验：账号存在且密码正确，不代表允许登录，还要看用户状态。
+
+
+六、MySQL、JDBC、事务与索引
+---------------------------
+
+1. 为什么使用 Spring JDBC 而不是 MyBatis/JPA？
+
+项目定位轻量，SQL 不复杂。Spring JDBC 的优点：
+
+- 依赖少。
+- SQL 透明。
+- 更容易理解底层数据库访问。
+- 适合学习 SQL 和 Repository 分层。
+
+缺点：
+
+- SQL 和映射代码手写较多。
+- 大项目中维护成本高于 ORM/Mapper 框架。
+
+2. JdbcTemplate 是什么？
+
+JdbcTemplate 是 Spring 对 JDBC 的封装。
+
+原生 JDBC 需要手动：
+
+- 获取连接。
+- 创建 PreparedStatement。
+- 设置参数。
+- 执行 SQL。
+- 遍历 ResultSet。
+- 关闭资源。
+
+JdbcTemplate 帮我们处理连接管理、异常转换、资源释放，我们只关注 SQL、参数和结果映射。
+
+3. PreparedStatement 的作用
+
+PreparedStatement 会把 SQL 结构和参数分离：
+
+SELECT * FROM user WHERE username = ?
+
+参数通过 setString 绑定，而不是字符串拼接。
+
+优点：
+
+- 防止 SQL 注入。
+- 数据库可以复用执行计划。
+- 参数类型更明确。
+
+4. SQL 注入是什么？
+
+如果直接拼接用户输入：
+
+"SELECT * FROM user WHERE username = '" + username + "'"
+
+攻击者输入：
+
+' OR '1'='1
+
+就可能改变 SQL 逻辑。
+
+本项目使用 JdbcTemplate 参数绑定，避免用户输入直接拼接到 SQL 结构中。
+
+5. 为什么 post 和 post_stat 分表？
+
+post 表存内容信息：
+
+- 标题。
+- 正文。
+- 作者。
+- 分类。
+
+post_stat 表存统计信息：
+
+- 浏览数。
+- 点赞数。
+- 评论数。
+- 热度分。
+
+统计数据更新频繁，正文数据相对稳定，分开后职责更清楚，也方便后续缓存或异步更新统计数据。
+
+6. 索引是什么？
+
+索引是数据库为了加速查询而维护的数据结构。MySQL InnoDB 常见索引底层是 B+ 树。
+
+没有索引时，查询可能需要全表扫描。
+
+有索引时，可以通过 B+ 树快速定位数据范围。
+
+7. B+ 树为什么适合数据库索引？
+
+B+ 树特点：
+
+- 多路平衡树，树高度低。
+- 非叶子节点只存索引键，能容纳更多 key。
+- 叶子节点存数据或主键，并且叶子节点有链表，适合范围查询。
+
+数据库数据通常在磁盘上，磁盘 IO 成本高。B+ 树高度低，可以减少磁盘 IO 次数。
+
+8. 聚簇索引和非聚簇索引
+
+InnoDB 主键索引是聚簇索引：
+
+- 叶子节点存整行数据。
+
+普通二级索引是非聚簇索引：
+
+- 叶子节点存索引字段和主键 ID。
+- 如果查询字段不在二级索引中，需要回表，通过主键再查聚簇索引。
+
+9. 本项目有哪些索引设计？
+
+示例：
+
+- user.uk_username：保证用户名唯一，并加速登录查询。
+- category.uk_code：保证分类 code 唯一。
+- post.idx_user_id：查询用户帖子。
+- post.idx_category_created：按分类查询帖子列表。
+- post.idx_created_at：按发布时间排序。
+- post_stat.idx_hot_score：热门帖子排序。
+- post_like.uk_post_user：保证同一用户对同一帖子只有一条点赞记录。
+- notice.idx_receiver_read_created：查询用户通知和未读通知。
+
+10. 为什么 post_like 要有唯一索引 uk_post_user？
+
+业务要求同一用户对同一帖子只能有一条点赞记录。
+
+唯一索引可以在数据库层保证约束，防止并发情况下插入重复记录。
+
+Service 层也做判断，但数据库唯一约束是最后防线。
+
+11. DuplicateKeyException 在注册和点赞中的意义
+
+当插入违反唯一索引时，Spring 会把数据库异常转换为 DuplicateKeyException。
+
+注册中：
+
+- username 唯一。
+- 并发注册同名用户时，即使 Service 先判断不存在，也可能两个线程同时插入。
+- 数据库唯一索引会阻止第二个插入，捕获 DuplicateKeyException 后返回用户名已存在。
+
+点赞中：
+
+- post_id + user_id 唯一。
+- 并发点赞时，唯一索引防止重复点赞记录。
+
+12. 事务是什么？
+
+事务保证一组数据库操作要么全部成功，要么全部失败。
+
+事务四大特性 ACID：
+
+- Atomicity 原子性：事务不可分割。
+- Consistency 一致性：事务执行前后数据满足约束。
+- Isolation 隔离性：并发事务互不干扰到一定程度。
+- Durability 持久性：提交后的数据持久保存。
+
+13. @Transactional 的作用
+
+Spring 通过 AOP 为方法开启事务。
+
+方法开始时开启事务，正常返回时提交，抛出运行时异常时回滚。
+
+本项目中发帖、评论、点赞等涉及多步数据库更新的地方使用事务：
+
+- 创建帖子 + 创建 post_stat。
+- 创建评论 + 增加评论数。
+- 点赞记录变化 + 增加点赞数。
+
+14. Spring 事务底层原理
+
+Spring 事务基于 AOP 代理。
+
+调用被 @Transactional 标记的方法时，实际调用的是代理对象。代理对象在方法前后加入事务逻辑：
+
+- 开启事务。
+- 执行业务方法。
+- 成功则 commit。
+- 异常则 rollback。
+
+注意：
+
+- 同类内部方法直接调用可能绕过代理，导致事务不生效。
+- 默认只对 RuntimeException 回滚。
+
+15. MySQL 隔离级别
+
+常见隔离级别：
+
+- Read Uncommitted：可能脏读。
+- Read Committed：解决脏读，但可能不可重复读。
+- Repeatable Read：MySQL InnoDB 默认级别，解决不可重复读，一定程度解决幻读。
+- Serializable：最高隔离，性能最低。
+
+16. 脏读、不可重复读、幻读
+
+脏读：
+
+读到别人未提交的数据。
+
+不可重复读：
+
+同一事务内两次读取同一行，结果不同，因为中间有其他事务提交了修改。
+
+幻读：
+
+同一事务内两次范围查询，结果行数不同，因为其他事务插入了符合条件的新行。
+
+
+七、Redis 缓存设计与底层原理
+----------------------------
+
+1. 项目中 Redis 用在哪里？
+
+项目中 Redis 是可选启用：
+
+- RedisTokenStore：存储登录 token。
+- RedisHotPostCache：缓存热门帖子列表。
+
+默认不启用 redis profile 时：
+
+- InMemoryTokenStore 保存 token。
+- NoOpHotPostCache 不做缓存。
+
+2. 为什么热门帖子适合缓存？
+
+热门帖子接口特点：
+
+- 读多写少。
+- 结果允许短时间延迟。
+- 查询需要排序 hot_score，访问频率可能较高。
+
+因此适合缓存。
+
+3. Cache Aside 模式是什么？
+
+Cache Aside 也叫旁路缓存模式。
+
+读流程：
+
+- 先查缓存。
+- 缓存命中直接返回。
+- 缓存未命中查数据库。
+- 将数据库结果写入缓存。
+- 返回结果。
+
+写流程通常是：
+
+- 先更新数据库。
+- 再删除缓存或让缓存自然过期。
+
+本项目热门帖子使用短 TTL，自然过期即可，减少复杂性。
+
+4. 缓存雪崩是什么？
+
+大量缓存 key 在同一时间过期，导致大量请求同时访问数据库，数据库压力骤增。
+
+本项目解决：
+
+- 热门帖子缓存写入时使用基础 TTL + 随机抖动。
+- 例如基础 300 秒，随机增加 0-60 秒。
+- 这样 key 的过期时间错开，降低同一时间集中失效风险。
+
+5. 缓存击穿是什么？
+
+某个热点 key 过期，大量请求同时访问这个热点 key，发现缓存未命中，于是同时打到数据库。
+
+本项目解决：
+
+- RedisHotPostCache.getOrLoad 中使用 Redis setIfAbsent 获取短期互斥锁。
+- 拿到锁的请求负责查数据库并写缓存。
+- 没拿到锁的请求短暂等待后再查缓存。
+
+6. 缓存穿透是什么？
+
+请求查询的数据在缓存和数据库都不存在，导致每次请求都绕过缓存访问数据库。
+
+本项目解决：
+
+- 合法分类但无热门帖子时，空列表也写入缓存。
+- 非法 categoryId 在 Service 层先校验，不存在直接返回 404，不进入缓存查询。
+
+7. Redis 分布式锁为什么要设置 TTL？
+
+如果加锁后应用宕机，锁没有释放，其他请求会一直拿不到锁。
+
+设置 TTL 后，即使应用异常退出，锁也会自动过期，避免死锁。
+
+8. 为什么锁 value 要用 UUID？
+
+每个请求加锁时生成不同 UUID。释放锁时检查 Redis 中的 value 是否等于自己的 UUID。
+
+这样可以避免误删别人的锁。
+
+例如：
+
+- 请求 A 加锁，业务执行太慢，锁过期。
+- 请求 B 获取新锁。
+- A 执行结束，如果直接 delete lockKey，会删掉 B 的锁。
+- 所以 A 删除前要检查 value 是否还是自己的。
+
+9. 当前锁释放有什么不足？
+
+当前实现是：
+
+- get lock value。
+- 判断是否等于自己的 UUID。
+- delete lock key。
+
+这两个操作不是原子操作。极端情况下仍可能有竞态。
+
+生产级更推荐：
+
+- 使用 Lua 脚本保证“判断 + 删除”原子性。
+- 或使用 Redisson。
+
+面试可以诚实说明：
+
+“这个项目是轻量实现，重点展示思路。生产级 Redis 锁我会使用 Lua 或 Redisson 保证释放锁的原子性。”
+
+10. Redis 为什么快？
+
+Redis 快的原因：
+
+- 数据主要存储在内存中。
+- 单线程事件循环避免多线程锁竞争。
+- 使用 IO 多路复用处理大量连接。
+- 数据结构实现高效。
+
+注意：
+
+Redis 6 之后引入多线程 IO，但命令执行主体仍以单线程模型为核心理解。
+
+11. IO 多路复用是什么？
+
+传统阻塞 IO 一个线程处理一个连接，连接多时线程成本高。
+
+IO 多路复用允许一个线程监听多个 socket，当某个 socket 可读/可写时再处理。
+
+Linux 常见实现：
+
+- select。
+- poll。
+- epoll。
+
+Redis 使用事件驱动模型，可以用少量线程处理大量连接。
+
+12. Redis 常见数据结构
+
+- String：字符串，适合 token、简单缓存。
+- Hash：对象字段。
+- List：列表。
+- Set：无序集合。
+- ZSet：有序集合，适合排行榜。
+- Bitmap、HyperLogLog、Stream 等。
+
+本项目热门帖子缓存使用 String 存 JSON。原因是实现简单，适合轻量项目。
+
+如果进一步优化热门榜，可以使用 ZSet 存 postId 和 hotScore。
+
+13. Redis 持久化
+
+Redis 持久化方式：
+
+- RDB：定时生成快照，恢复快，但可能丢失最近数据。
+- AOF：追加写命令，数据更完整，文件更大，恢复较慢。
+
+本项目缓存数据不要求强持久化，即使丢失也可以从 MySQL 回源。
+
+
+八、RocketMQ 事件解耦与消息队列原理
+-----------------------------------
+
+1. 项目为什么引入事件模块？
+
+评论和点赞都会触发通知。如果在 CommentService 或 LikeService 中直接写死 NoticeService，会增加模块耦合。
+
+项目使用 DomainEventPublisher 抽象事件发布：
+
+- 评论发布 CommentCreatedEvent。
+- 点赞发布 PostLikedEvent。
+
+默认同步生成通知，启用 rocketmq profile 后异步发送消息。
+
+2. 为什么不是一开始就强制用 RocketMQ？
+
+因为本地开发和测试不应该强依赖 RocketMQ，否则启动成本高。
+
+项目使用 profile：
+
+- 默认：SyncDomainEventPublisher。
+- rocketmq：RocketMqDomainEventPublisher + RocketMqEventConsumer。
+
+这样兼顾简单性和扩展性。
+
+3. 消息队列有什么作用？
+
+常见作用：
+
+- 解耦：生产者不直接依赖消费者。
+- 削峰：高峰请求先写入 MQ，消费者按能力处理。
+- 异步：非核心流程异步执行，缩短主请求耗时。
+
+本项目主要体现解耦和异步扩展。
+
+4. RocketMQ 基本角色
+
+- Producer：生产者，发送消息。
+- Consumer：消费者，消费消息。
+- Broker：消息存储和转发。
+- NameServer：服务发现，保存 Broker 路由信息。
+- Topic：消息主题。
+- Consumer Group：消费者组。
+
+5. 消息投递语义
+
+MQ 常见投递语义：
+
+- 至多一次：可能丢消息，但不会重复。
+- 至少一次：不丢消息，但可能重复。
+- 恰好一次：理论理想，实际成本高。
+
+RocketMQ 常见理解是至少一次投递，因此消费者要考虑幂等。
+
+6. 本项目当前幂等情况
+
+当前项目已经通过“自己给自己不通知”避免无意义通知，但没有专门做 MQ 消费幂等表。
+
+如果面试官追问，可以回答：
+
+“当前项目的 RocketMQ 部分定位是事件解耦扩展，没有继续引入去重表，避免项目过度复杂。生产环境我会给通知事件设计业务唯一键，例如 type + senderId + receiverId + postId + commentId，并在 notice 表或单独 event_consume_log 表上加唯一索引，保证重复投递时不会重复生成通知。”
+
+7. 为什么这次没有继续做 MQ 幂等？
+
+因为项目定位是实习简历项目，功能要能讲清楚。MQ 幂等涉及消息唯一键、消费日志、事务边界、重复投递等更多内容，如果自己掌握不够深入，放进项目反而容易在面试中被追问击穿。
+
+这个取舍可以体现项目边界意识。
+
+
+九、JUC 浏览量批量刷库与并发原理
+--------------------------------
+
+1. 为什么浏览量不每次访问都更新数据库？
+
+帖子详情访问可能很频繁，如果每次访问都执行：
+
+UPDATE post_stat SET view_count = view_count + 1
+
+会带来：
+
+- 数据库写压力大。
+- 热点帖子行频繁更新。
+- 请求响应受数据库写影响。
+
+因此项目先在内存中累加浏览量，再定时批量刷库。
+
+2. ViewCountService 使用了哪些 JUC 类？
+
+- ConcurrentHashMap<Long, LongAdder>：保存每个帖子待刷新的浏览量。
+- LongAdder：高并发计数器。
+- ScheduledExecutorService：定时任务线程池。
+
+3. ConcurrentHashMap 为什么线程安全？
+
+ConcurrentHashMap 内部通过分段思想和 CAS、synchronized 等机制保证并发安全。
+
+JDK 8 中 ConcurrentHashMap 主要结构：
+
+- 数组 + 链表 + 红黑树。
+- 对空桶插入使用 CAS。
+- 对已有桶更新使用 synchronized 锁住桶头节点。
+- 读操作大多无锁。
+
+4. LongAdder 为什么比 AtomicLong 更适合高并发计数？
+
+AtomicLong 使用一个 value，通过 CAS 更新。
+
+高并发下大量线程竞争同一个 value，CAS 失败重试严重。
+
+LongAdder 将计数拆散到多个 Cell，不同线程更新不同 Cell，最后 sum 时汇总。
+
+优点：
+
+- 高并发写性能更好。
+
+缺点：
+
+- sum 不是强实时精确快照。
+
+浏览量统计允许短时间延迟，所以 LongAdder 很适合。
+
+5. ScheduledExecutorService 的作用
+
+ScheduledExecutorService 可以周期性执行任务。
+
+项目中 afterPropertiesSet 启动定时任务：
+
+- 每隔固定秒数执行 flushSafely。
+- flushSafely 调用 flushPendingViews。
+- 将内存浏览量写入数据库。
+
+6. 为什么 destroy 时还要 flush？
+
+应用关闭前，内存中可能还有未刷入数据库的浏览量。
+
+destroy 中先停止调度器，再执行一次 flushPendingViews，可以减少数据丢失。
+
+7. 这种方案的缺点
+
+- 应用异常宕机时，内存中未刷新的浏览量可能丢失。
+- 多实例部署时，每个实例都有自己的内存计数。
+
+生产级优化：
+
+- 使用 Redis 计数。
+- 定时任务统一从 Redis 刷库。
+- 或使用消息队列异步统计。
+
+本项目使用内存方案是为了轻量，并展示 JUC 能力。
+
+
+十、异常处理、日志与可维护性
+----------------------------
+
+1. 为什么要有 BusinessException？
+
+业务失败不应该都用 RuntimeException 直接抛。
+
+BusinessException 携带 ErrorCode，能表达具体业务错误：
+
+- 未登录。
+- 无权限。
+- 用户名已存在。
+- 资源不存在。
+
+2. GlobalExceptionHandler 的作用
+
+统一捕获异常并转换成 ApiResponse。
+
+好处：
+
+- Controller 不需要重复 try-catch。
+- 失败响应结构统一。
+- 未知异常会记录日志，便于排查。
+
+3. 为什么未知异常不直接返回 exception.message？
+
+未知异常可能包含敏感信息，例如 SQL、路径、内部类名等。
+
+对用户只返回“系统内部错误”，服务端记录详细日志，这是更安全的做法。
+
+4. 日志的重要性
+
+日志用于线上排查。
+
+本项目在 GlobalExceptionHandler 中记录未处理异常：
+
+log.error("Unhandled exception", exception)
+
+这样用户看到统一错误时，开发者仍能在服务端日志中定位堆栈。
+
+
+十一、测试设计与 H2 集成测试
+----------------------------
+
+1. 为什么要写集成测试？
+
+单元测试关注单个类，集成测试关注完整链路。
+
+本项目的接口集成测试可以验证：
+
+- Controller 路由是否正确。
+- 参数校验是否生效。
+- Service 业务是否正确。
+- Repository SQL 是否能执行。
+- 数据库状态是否符合预期。
+- 异常响应是否统一。
+
+2. 为什么测试用 H2？
+
+H2 是内存数据库：
+
+- 启动快。
+- 不依赖本地 MySQL。
+- 测试结束后数据自动销毁。
+- 适合 CI 和本地自动测试。
+
+3. H2 和 MySQL 的差异
+
+项目中遇到过差异：
+
+- comment 是关键字，需要反引号或 H2 NON_KEYWORDS 配置。
+- H2 索引名在 schema 级别更敏感，所以测试 schema 中索引名要避免重复。
+- 自增主键返回 generated keys 时，H2 可能返回多个字段，因此代码明确指定只返回 id。
+
+这也说明集成测试能帮助发现数据库兼容性问题。
+
+4. 为什么使用随机端口？
+
+@SpringBootTest(webEnvironment = RANDOM_PORT)
+
+优点：
+
+- 避免端口冲突。
+- 测试启动真实 HTTP 服务。
+- 更接近真实调用。
+
+5. 测试覆盖了哪些边界？
+
+- 未登录发帖返回 40100。
+- 重复注册返回 40901。
+- page=0 返回 40000。
+- 普通用户调用管理员接口返回 40300。
+- 重复点赞不会重复增加点赞数。
+- 重复取消点赞不会继续减少点赞数。
+
+6. 为什么要测重复点赞？
+
+点赞是典型幂等场景。
+
+用户多次点击点赞按钮，不应该导致点赞数多次增加。
+
+项目通过 post_like 唯一索引和 Service 判断保证重复点赞稳定。
+
+
+十二、项目不足与可优化方向
+--------------------------
+
+1. 当前不足
+
+- 管理员账号创建机制没有做自动初始化，需要手动设置数据库角色。
+- RocketMQ 消费没有实现专门的幂等去重表。
+- Redis 锁释放没有使用 Lua 脚本保证原子性。
+- 浏览量内存计数异常宕机可能丢失。
+- 没有接入 Swagger/OpenAPI 自动文档。
+- 没有 Docker Compose 一键启动依赖。
+
+2. 为什么没有全部做？
+
+项目定位是实习简历项目，不适合堆过多自己无法深入掌握的扩展。
+
+当前保留的技术点都能围绕业务讲清楚：
+
+- Redis 缓存优化。
+- RocketMQ 事件解耦。
+- JUC 浏览量批量刷库。
+- 集成测试。
+
+这比盲目加入复杂功能更稳。
+
+3. 如果继续优化，优先级如何？
+
+建议优先：
+
+- 增加管理员账号初始化或后台创建管理员机制。
+- 给 RocketMQ 通知消费增加幂等。
+- 使用 Lua 或 Redisson 优化 Redis 锁释放。
+- 增加 Docker Compose。
+- 增加 Swagger/OpenAPI。
+
+
+十三、模拟面试 Q&A
+------------------
+
+Q1：请介绍一下你的 CampusHub 项目。
+
+A：
+CampusHub 是一个轻量级校园论坛后端项目，主要面向校园交流场景。我围绕论坛核心链路实现了用户认证、帖子、评论、点赞、通知和后台管理功能。项目采用 Spring Boot + Spring JDBC + MySQL 分层开发，Controller 负责接口，Service 负责业务规则，Repository 负责数据库访问。为了提升项目完整度，我还加入了 Redis 热门帖子缓存，并通过 TTL 随机抖动、互斥锁、空结果缓存缓解缓存雪崩、击穿和穿透问题；用 RocketMQ 事件模型解耦评论、点赞和通知；用 JUC 实现浏览量内存累计和定时批量刷库。最后使用 H2 编写集成测试覆盖核心流程和边界场景，并补充了接口文档和 README。
+
+Q2：你的项目为什么选择单体架构，而不是微服务？
+
+A：
+这个项目定位是实习简历项目，核心目标是完整实现后端业务闭环。当前业务规模下，单体架构更简单，部署和调试成本低，也能更清楚体现模块分层。项目内部已经按 auth、post、comment、notice 等业务包拆分，边界比较清晰。如果后续访问量和团队规模变大，可以再拆分成用户服务、内容服务、互动服务、通知服务。现在直接上微服务会增加注册中心、网关、分布式事务等复杂度，反而偏离项目目标。
+
+Q3：Controller、Service、Repository 分别负责什么？
+
+A：
+Controller 负责 HTTP 层，读取请求参数、请求体、请求头，并返回统一响应。Service 负责业务逻辑，例如登录校验、权限校验、资源状态判断、事件发布。Repository 只负责数据库访问，封装 SQL 和结果映射。这样分层后每层职责清楚，业务代码不会堆在 Controller 里，也方便测试和维护。
+
+Q4：为什么使用统一响应结构？
+
+A：
+统一响应结构可以让前端处理更简单。无论成功还是失败，都返回 code、message、data。成功时 code 为 0，失败时 code 为具体业务错误码。这样前端可以统一根据 code 判断业务结果，测试时也可以直接断言 code。同时，配合 GlobalExceptionHandler，业务异常可以统一转换成失败响应。
+
+Q5：你为什么设计 ErrorCode？
+
+A：
+ErrorCode 是为了统一管理业务错误码。比如参数错误、未登录、无权限、资源不存在、用户名已存在等。这样错误码不会散落在代码里，也方便接口文档说明和前端适配。BusinessException 中保存 ErrorCode，全局异常处理器根据它返回对应 code 和 message。
+
+Q6：@Valid 在你的项目里起什么作用？
+
+A：
+@Valid 用于请求参数校验。比如注册时 username 要满足长度和正则，password 要满足长度，评论内容不能为空且不能超过 500。Spring MVC 在将 JSON 转换成 Java record 后，会触发 Validator 校验。如果失败，会抛出 MethodArgumentNotValidException，然后被 GlobalExceptionHandler 捕获，返回参数错误。
+
+Q7：你怎么保证用户密码安全？
+
+A：
+我使用 Spring Security Crypto 提供的 BCryptPasswordEncoder。注册时使用 encode 对密码做不可逆哈希，登录时用 matches 校验明文密码和哈希值是否匹配。BCrypt 会自动加盐，同一个密码每次生成的结果也不同，并且计算成本可调，可以提升暴力破解成本。
+
+Q8：BCrypt 是加密吗？
+
+A：
+严格来说不是加密，而是哈希。加密一般可以解密回原文，BCrypt 不可逆。登录时不是解密数据库密码，而是用同样算法和密文中的盐、成本参数进行校验，判断输入密码是否匹配。
+
+Q9：你的 token 是怎么管理的？
+
+A：
+我抽象了 TokenStore 接口，定义 createSession、findUserId、remove 和 resolveBearerToken。默认使用 InMemoryTokenStore，适合本地开发和测试；启用 redis profile 后使用 RedisTokenStore，把 token 存在 Redis 中并设置 TTL。这样 AuthService 只依赖 TokenStore 接口，不关心具体存储方式。
+
+Q10：为什么要抽象 TokenStore？
+
+A：
+这是面向接口编程。登录态存储可能随环境变化，本地开发用内存简单，部署时用 Redis 支持多实例共享。如果 AuthService 直接写 Redis 逻辑，就会和 Redis 强耦合；抽象 TokenStore 后可以轻松替换实现。
+
+Q11：RedisTokenStore 为什么适合多实例？
+
+A：
+如果 token 存在本地内存，多实例部署时用户登录到 A 实例，下一次请求打到 B 实例，B 实例没有 token，就会认为未登录。Redis 是外部共享存储，多个实例都能查同一份 token，因此适合多实例登录态共享。
+
+Q12：你的项目中 Redis 主要解决什么问题？
+
+A：
+Redis 主要有两个使用点。一个是 token 存储扩展，另一个是热门帖子缓存。热门帖子是读多写少的接口，短时间结果可以复用，所以我使用 Cache Aside 模式缓存结果，并加入 TTL 抖动、互斥锁和空结果缓存来缓解缓存雪崩、击穿和穿透。
+
+Q13：什么是缓存雪崩？你的项目怎么解决？
+
+A：
+缓存雪崩是大量 key 在同一时间失效，导致请求同时打到数据库。项目中热门帖子缓存写入时不是固定 TTL，而是基础 TTL 加一个随机抖动，比如 300 秒加 0 到 60 秒随机值。这样不同 key 过期时间错开，降低集中失效风险。
+
+Q14：什么是缓存击穿？你的项目怎么解决？
+
+A：
+缓存击穿是某个热点 key 失效后，大量并发请求同时发现缓存未命中，然后一起访问数据库。项目中 RedisHotPostCache 在缓存未命中时使用 Redis setIfAbsent 加短期互斥锁，只有拿到锁的请求回源 MySQL 并写缓存，其他请求短暂等待后再查缓存。
+
+Q15：什么是缓存穿透？你的项目怎么解决？
+
+A：
+缓存穿透是请求查询的数据在缓存和数据库都不存在，导致每次都打到数据库。项目中对热门帖子接口做了两点处理：如果 categoryId 非法，Service 层先校验分类，不存在直接返回 404；如果分类合法但没有热门帖子，会把空列表也写入缓存，避免反复访问数据库。
+
+Q16：你的 Redis 锁是否完全可靠？
+
+A：
+当前实现是轻量版，使用 setIfAbsent 加锁，并设置锁 TTL，value 使用 UUID，释放时会判断 value 是否是自己的，避免误删别人的锁。但释放锁的“判断和删除”不是原子操作，生产级我会使用 Lua 脚本或 Redisson 来保证原子性。这个项目主要展示缓存击穿的处理思路，没有过度复杂化。
+
+Q17：为什么 Redis 快？
+
+A：
+Redis 主要数据在内存中，避免了磁盘 IO；采用单线程事件循环处理命令，避免多线程锁竞争；使用 IO 多路复用处理大量连接；同时内部数据结构实现高效。Redis 6 虽然引入多线程 IO，但命令执行模型仍可以按单线程事件循环理解。
+
+Q18：你为什么使用 Spring JDBC，而不是 MyBatis？
+
+A：
+项目 SQL 不复杂，使用 Spring JDBC 可以保持轻量，并且 SQL 透明，有利于我理解数据库访问过程。JdbcTemplate 帮我处理连接管理、资源释放和异常转换，我只需要关注 SQL、参数和结果映射。对于更大项目，可以换 MyBatis 提升 SQL 映射维护性。
+
+Q19：JdbcTemplate 相比原生 JDBC 做了什么封装？
+
+A：
+原生 JDBC 需要手动获取连接、创建 PreparedStatement、设置参数、执行 SQL、遍历 ResultSet、关闭资源。JdbcTemplate 封装了连接管理、资源释放、异常转换等通用逻辑，开发者只关注 SQL 和映射函数。
+
+Q20：你的项目如何防止 SQL 注入？
+
+A：
+项目使用 JdbcTemplate 的参数绑定，比如 WHERE username = ?，参数通过方法传入，而不是直接拼接用户输入。这样用户输入只会作为参数值，不会改变 SQL 结构，从而避免 SQL 注入。
+
+Q21：为什么 post_like 要设计唯一索引？
+
+A：
+业务要求一个用户对一个帖子只能有一条点赞记录，所以 post_like 表上有 post_id + user_id 的唯一索引。Service 层会判断是否已点赞，但并发情况下两个请求可能同时判断未点赞并插入，唯一索引是数据库层的最终防线，能防止重复点赞记录。
+
+Q22：DuplicateKeyException 在项目中有什么作用？
+
+A：
+它表示插入违反唯一约束。注册时 username 有唯一索引，并发注册同名用户时，第二个插入会触发 DuplicateKeyException，项目捕获后返回 USERNAME_EXISTS。点赞也类似，通过唯一索引防止重复点赞。
+
+Q23：你项目里哪些地方用了事务？
+
+A：
+发帖、评论、点赞等涉及多步数据库操作的地方使用 @Transactional。例如发帖需要插入 post 和 post_stat；评论需要插入 comment 并更新 post_stat；点赞需要更新 post_like 和 post_stat。这些操作应该保持一致，要么都成功，要么回滚。
+
+Q24：@Transactional 底层怎么实现？
+
+A：
+Spring 事务基于 AOP 代理。调用被 @Transactional 标记的方法时，实际进入代理对象，代理在方法执行前开启事务，方法正常返回就提交，抛出运行时异常就回滚。需要注意同类内部方法调用可能绕过代理，导致事务不生效。
+
+Q25：MySQL 索引底层为什么通常是 B+ 树？
+
+A：
+B+ 树是多路平衡树，树高低，可以减少磁盘 IO。非叶子节点只存 key，叶子节点存数据或主键，并且叶子节点之间有链表，适合范围查询。数据库数据通常在磁盘上，减少 IO 次数非常关键，所以 B+ 树适合作为索引结构。
+
+Q26：什么是回表？
+
+A：
+InnoDB 中主键索引是聚簇索引，叶子节点存整行数据。普通二级索引叶子节点存索引字段和主键。如果通过二级索引查到主键后，还需要再通过主键索引查询整行数据，这个过程叫回表。
+
+Q27：为什么把帖子统计数据放到 post_stat？
+
+A：
+帖子正文数据相对稳定，而浏览数、点赞数、评论数和热度分更新频繁。拆到 post_stat 后职责更清晰，也方便对统计字段做缓存或异步更新，避免帖子主表承担过多频繁更新。
+
+Q28：评论和点赞为什么要通过事件生成通知？
+
+A：
+评论和点赞是互动行为，通知是后续动作。如果直接在 CommentService 和 LikeService 中强依赖 NoticeService，会让模块耦合。通过 DomainEventPublisher 发布事件后，默认可以同步处理，启用 RocketMQ 后可以异步处理，业务扩展更灵活。
+
+Q29：你为什么使用 profile 区分同步事件和 RocketMQ？
+
+A：
+本地开发和测试不应该强依赖 RocketMQ，所以默认 profile 使用 SyncDomainEventPublisher，同步生成通知。启用 rocketmq profile 后才使用 RocketMqDomainEventPublisher 和消费者。这样项目默认简单可运行，同时保留异步扩展能力。
+
+Q30：RocketMQ 有什么作用？
+
+A：
+消息队列主要用于解耦、异步和削峰。本项目中主要用于解耦评论/点赞和通知生成。评论或点赞服务只负责发布事件，不直接关心通知如何生成。后续通知消费可以独立扩展。
+
+Q31：RocketMQ 会不会重复消费？你的项目怎么考虑？
+
+A：
+RocketMQ 通常按至少一次投递理解，可能重复消费。当前项目为了保持轻量，没有加入专门的消费去重表。如果生产化，我会为通知事件设计业务唯一键，比如 type、senderId、receiverId、postId、commentId，并在 notice 表或 event_consume_log 表上加唯一索引，保证重复消费不会生成重复通知。
+
+Q32：你为什么没有把 MQ 幂等也实现？
+
+A：
+我对项目边界做了取舍。这个项目定位是实习简历项目，当前已经体现了事件解耦和 RocketMQ 扩展点。如果继续引入消费日志、事务消息、重复消费处理，会增加复杂度。对于我现阶段，更重要的是保证已实现的功能能讲清楚。面试中我可以说明生产环境的改进方案。
+
+Q33：浏览量为什么用 LongAdder？
+
+A：
+浏览量是高频计数场景。AtomicLong 在高并发下所有线程竞争同一个变量，CAS 失败重试可能严重。LongAdder 将计数拆到多个 Cell 中，不同线程更新不同 Cell，最后 sum 汇总，适合高并发计数。浏览量允许短时间延迟，所以 LongAdder 很合适。
+
+Q34：LongAdder 的缺点是什么？
+
+A：
+LongAdder 的 sum 不是强一致实时快照，因为统计时其他线程可能还在更新。但对于浏览量这种统计指标，可以接受短时间不精确。它换来的是高并发写入性能。
+
+Q35：ConcurrentHashMap 底层原理了解吗？
+
+A：
+JDK 8 的 ConcurrentHashMap 使用数组 + 链表 + 红黑树结构。对空桶插入使用 CAS，对非空桶更新使用 synchronized 锁住桶头节点，读操作大部分无锁。相比 Hashtable 整表加锁，ConcurrentHashMap 并发性能更好。
+
+Q36：ScheduledExecutorService 在项目中做什么？
+
+A：
+ViewCountService 使用 ScheduledExecutorService 定时执行 flushPendingViews，把内存中的浏览量增量批量写入数据库。这样可以减少帖子详情接口的同步写数据库压力。
+
+Q37：浏览量内存批量刷库有什么风险？
+
+A：
+如果应用异常宕机，内存中未刷新的浏览量可能丢失。多实例部署时每个实例也有自己的内存计数。生产级可以把计数放到 Redis，再由定时任务统一刷库，或者使用 MQ 异步统计。当前项目使用内存方案是为了轻量并体现 JUC 使用。
+
+Q38：你的通知模块怎么设计？
+
+A：
+通知模块包括 notice 表、NoticeRepository、NoticeService 和 NoticeController。评论和点赞事件最终会调用 NoticeService 创建通知。通知支持分页查询、按已读状态过滤、查询未读数、标记单条已读和全部已读。查询时只查当前登录用户作为 receiver 的通知。
+
+Q39：管理员权限是怎么控制的？
+
+A：
+管理员接口在 AdminService 中统一调用 requireAdmin。requireAdmin 会解析当前用户，查询用户资料，判断用户状态是否正常以及 role 是否为 1。这样权限控制在业务层，而不是只依赖 Controller。
+
+Q40：为什么权限控制放 Service 层？
+
+A：
+因为权限是业务规则，不只是 HTTP 层规则。放 Service 层可以保证即使未来有其他入口调用这些业务方法，也会执行权限校验。同时 Controller 保持轻薄。
+
+Q41：项目中如何处理资源不存在？
+
+A：
+Service 层会查询资源，如果不存在则抛出 BusinessException(ErrorCode.NOT_FOUND)。比如帖子不存在、评论不存在、通知不存在都会返回统一的 40400 业务码。
+
+Q42：项目中如何实现分页？
+
+A：
+Controller 接收 page 和 size，并用 @Min、@Max 做校验。Repository 中使用 LIMIT ? OFFSET ? 查询当前页数据，同时使用 COUNT(*) 查询总数。Service 再封装成 PageResponse，包含 page、size、total、pages、records。
+
+Q43：分页中 offset 有什么问题？
+
+A：
+当页数很大时，LIMIT offset, size 会跳过大量记录，性能变差。生产中可以使用基于游标的分页，比如根据 lastId 或 createdAt 查询下一页。当前项目数据规模较小，普通 offset 分页足够简单清晰。
+
+Q44：你的测试为什么不是只测 Service？
+
+A：
+因为我想验证真实接口链路，包括 Controller 路由、参数校验、异常处理、Service 业务、Repository SQL 和数据库状态。因此使用 @SpringBootTest 启动真实服务，用 HttpClient 发送请求。这比只测 Service 更能发现集成问题。
+
+Q45：为什么测试用 H2 而不是 MySQL？
+
+A：
+H2 是内存数据库，测试启动快，不依赖本地 MySQL，适合自动化测试和 CI。项目也为 H2 单独准备了 test schema 和 data，保证测试环境独立。
+
+Q46：H2 和 MySQL 兼容问题你遇到过吗？
+
+A：
+遇到过。例如 comment 是关键字，需要反引号或 H2 NON_KEYWORDS 配置；H2 对索引名重复更敏感，所以测试 schema 中索引名要唯一；H2 返回 generated keys 时可能返回多个字段，因此代码中明确指定只返回 id。这些问题通过集成测试暴露出来并修复。
+
+Q47：你的项目目前最大的亮点是什么？
+
+A：
+我认为最大亮点不是某一个技术，而是业务完整和技术使用贴合场景。比如 Redis 用在热门帖子缓存，并且考虑了雪崩、击穿、穿透；RocketMQ 用于评论/点赞和通知解耦；JUC 用于浏览量批量刷库。这些技术不是为了堆栈，而是围绕具体业务问题引入的。
+
+Q48：项目有什么不足？
+
+A：
+项目目前仍然是轻量后端，不是生产级系统。不足包括：RocketMQ 消费没有做专门幂等表；Redis 锁释放没有用 Lua 保证原子性；浏览量内存计数异常宕机可能丢失；管理员账号需要手动设置角色；没有 Docker Compose 和 Swagger。后续可以按优先级逐步补充。
+
+Q49：如果面试官让你现场扩展一个功能，你会怎么做？
+
+A：
+我会先明确需求边界，然后按现有分层扩展。例如新增“收藏帖子”功能，我会建 favorite 表，增加 favorite 包，包含 Controller、Service、Repository、Request/Response；Service 做登录和帖子状态校验；Repository 做唯一索引防重复收藏；接口文档和集成测试同步补充。尽量沿用项目现有结构，不破坏原有风格。
+
+Q50：你从这个项目学到了什么？
+
+A：
+我最大的收获是理解了后端项目不是只写接口，还包括业务边界、分层架构、数据模型、异常处理、缓存策略、消息解耦、并发优化、测试和文档。比如 Redis 缓存优化让我理解了雪崩、击穿、穿透不是单纯八股，而是要结合具体业务场景处理；JUC 浏览量统计让我理解了高频写请求如何通过内存聚合降低数据库压力。
+
+
+十四、面试表达建议
+------------------
+
+1. 不要把项目说得过大
+
+推荐表达：
+
+“这是一个轻量级校园论坛后端项目，重点是完整链路和工程化。”
+
+避免表达：
+
+“这是一个高并发分布式论坛系统。”
+
+2. 每个技术点都要联系业务
+
+不要说：
+
+“我用了 Redis、RocketMQ、JUC。”
+
+要说：
+
+“热门帖子读多写少，所以我用 Redis 缓存；评论和点赞会触发通知，所以我用事件模型解耦；浏览量访问频繁，所以我用 LongAdder 做内存累计并定时刷库。”
+
+3. 对不足要诚实
+
+承认不足不是扣分，前提是你知道怎么改。
+
+例如：
+
+“当前 Redis 锁释放是轻量实现，生产环境我会使用 Lua 或 Redisson 保证原子性。”
+
+4. 回答问题的结构
+
+建议使用：
+
+项目中怎么做 -> 为什么这样做 -> 有什么不足 -> 生产环境如何优化。
+
+这个结构能体现你不是背答案，而是真的理解工程权衡。
+

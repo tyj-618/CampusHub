@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS post_stat (
     KEY idx_hot_score (hot_score)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='帖子统计表';
 
-CREATE TABLE IF NOT EXISTS comment (
+CREATE TABLE IF NOT EXISTS `comment` (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '评论ID',
     post_id BIGINT NOT NULL COMMENT '帖子ID',
     user_id BIGINT NOT NULL COMMENT '评论用户ID',

@@ -4,6 +4,8 @@ import com.tyj.campushub.common.ErrorCode;
 import com.tyj.campushub.exception.BusinessException;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class CurrentUserService {
 
@@ -19,5 +21,10 @@ public class CurrentUserService {
 
         return tokenStore.findUserId(token)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+    }
+
+    public Optional<Long> findUserId(String authorization) {
+        return tokenStore.resolveBearerToken(authorization)
+                .flatMap(tokenStore::findUserId);
     }
 }
