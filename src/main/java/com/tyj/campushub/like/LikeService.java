@@ -6,7 +6,7 @@ import com.tyj.campushub.event.DomainEventPublisher;
 import com.tyj.campushub.event.PostLikedEvent;
 import com.tyj.campushub.exception.BusinessException;
 import com.tyj.campushub.post.PostDetail;
-import com.tyj.campushub.post.PostRepository;
+import com.tyj.campushub.post.PostMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,15 +15,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class LikeService {
 
     private final CurrentUserService currentUserService;
-    private final LikeRepository likeRepository;
-    private final PostRepository postRepository;
+    private final LikeMapper likeMapper;
+    private final PostMapper postMapper;
     private final DomainEventPublisher domainEventPublisher;
 
-    public LikeService(CurrentUserService currentUserService, LikeRepository likeRepository, PostRepository postRepository,
+    public LikeService(CurrentUserService currentUserService, LikeMapper likeMapper, PostMapper postMapper,
                        DomainEventPublisher domainEventPublisher) {
         this.currentUserService = currentUserService;
-        this.likeRepository = likeRepository;
-        this.postRepository = postRepository;
+        this.likeMapper = likeMapper;
+        this.postMapper = postMapper;
         this.domainEventPublisher = domainEventPublisher;
     }
 
@@ -32,29 +32,29 @@ public class LikeService {
         Long currentUserId = currentUserService.requireUserId(authorization);
         PostDetail postDetail = findNormalPost(postId);
 
-        LikeRecord likeRecord = likeRepository.findByPostIdAndUserId(postId, currentUserId).orElse(null);
+        LikeRecord likeRecord = likeMapper.findByPostIdAndUserId(postId, currentUserId).orElse(null);
         if (likeRecord != null && likeRecord.status() == 0) {
-            return new LikeResponse(true, likeRepository.findLikeCount(postId));
+            return new LikeResponse(true, likeMapper.findLikeCount(postId));
         }
 
         if (likeRecord == null) {
             try {
-                likeRepository.saveLike(postId, currentUserId);
+                likeMapper.saveLike(postId, currentUserId);
             } catch (DuplicateKeyException exception) {
-                likeRecord = likeRepository.findByPostIdAndUserId(postId, currentUserId)
+                likeRecord = likeMapper.findByPostIdAndUserId(postId, currentUserId)
                         .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR, "点赞状态查询失败"));
                 if (likeRecord.status() == 0) {
-                    return new LikeResponse(true, likeRepository.findLikeCount(postId));
+                    return new LikeResponse(true, likeMapper.findLikeCount(postId));
                 }
-                likeRepository.activateLike(likeRecord.id());
+                likeMapper.activateLike(likeRecord.id());
             }
         } else {
-            likeRepository.activateLike(likeRecord.id());
+            likeMapper.activateLike(likeRecord.id());
         }
 
-        likeRepository.increaseLikeCount(postId);
+        likeMapper.increaseLikeCount(postId);
         domainEventPublisher.publishPostLiked(new PostLikedEvent(postDetail.userId(), currentUserId, postId));
-        return new LikeResponse(true, likeRepository.findLikeCount(postId));
+        return new LikeResponse(true, likeMapper.findLikeCount(postId));
     }
 
     @Transactional
@@ -62,21 +62,21 @@ public class LikeService {
         Long currentUserId = currentUserService.requireUserId(authorization);
         ensureNormalPost(postId);
 
-        LikeRecord likeRecord = likeRepository.findByPostIdAndUserId(postId, currentUserId).orElse(null);
+        LikeRecord likeRecord = likeMapper.findByPostIdAndUserId(postId, currentUserId).orElse(null);
         if (likeRecord == null || likeRecord.status() == 1) {
-            return new LikeResponse(false, likeRepository.findLikeCount(postId));
+            return new LikeResponse(false, likeMapper.findLikeCount(postId));
         }
 
-        likeRepository.cancelLike(likeRecord.id());
-        likeRepository.decreaseLikeCount(postId);
-        return new LikeResponse(false, likeRepository.findLikeCount(postId));
+        likeMapper.cancelLike(likeRecord.id());
+        likeMapper.decreaseLikeCount(postId);
+        return new LikeResponse(false, likeMapper.findLikeCount(postId));
     }
 
     public LikeStatusResponse getLikeStatus(Long postId, String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
         ensureNormalPost(postId);
 
-        boolean liked = likeRepository.findByPostIdAndUserId(postId, currentUserId)
+        boolean liked = likeMapper.findByPostIdAndUserId(postId, currentUserId)
                 .map(likeRecord -> likeRecord.status() == 0)
                 .orElse(false);
 
@@ -84,13 +84,13 @@ public class LikeService {
     }
 
     private void ensureNormalPost(Long postId) {
-        if (!likeRepository.existsNormalPost(postId)) {
+        if (!likeMapper.existsNormalPost(postId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在");
         }
     }
 
     private PostDetail findNormalPost(Long postId) {
-        PostDetail postDetail = postRepository.findDetailById(postId)
+        PostDetail postDetail = postMapper.findDetailById(postId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在"));
 
         if (postDetail.status() != 0) {

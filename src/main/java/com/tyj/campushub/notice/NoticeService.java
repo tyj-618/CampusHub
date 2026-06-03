@@ -16,11 +16,11 @@ public class NoticeService {
     public static final int TYPE_LIKE = 2;
 
     private final CurrentUserService currentUserService;
-    private final NoticeRepository noticeRepository;
+    private final NoticeMapper noticeMapper;
 
-    public NoticeService(CurrentUserService currentUserService, NoticeRepository noticeRepository) {
+    public NoticeService(CurrentUserService currentUserService, NoticeMapper noticeMapper) {
         this.currentUserService = currentUserService;
-        this.noticeRepository = noticeRepository;
+        this.noticeMapper = noticeMapper;
     }
 
     public void createCommentNotice(Long receiverId, Long senderId, Long postId, Long commentId) {
@@ -28,7 +28,7 @@ public class NoticeService {
             return;
         }
 
-        noticeRepository.saveNotice(new CreateNoticeCommand(
+        noticeMapper.saveNotice(new CreateNoticeCommand(
                 receiverId,
                 senderId,
                 postId,
@@ -43,7 +43,7 @@ public class NoticeService {
             return;
         }
 
-        noticeRepository.saveNotice(new CreateNoticeCommand(
+        noticeMapper.saveNotice(new CreateNoticeCommand(
                 receiverId,
                 senderId,
                 postId,
@@ -57,7 +57,7 @@ public class NoticeService {
         Long currentUserId = currentUserService.requireUserId(authorization);
         validateReadStatus(readStatus);
 
-        PageQueryResult<NoticeItem> result = noticeRepository.findNoticesByReceiverId(currentUserId, page, size, readStatus);
+        PageQueryResult<NoticeItem> result = noticeMapper.findNoticesByReceiverId(currentUserId, page, size, readStatus);
         List<NoticeResponse> records = result.records().stream()
                 .map(NoticeResponse::from)
                 .toList();
@@ -67,21 +67,21 @@ public class NoticeService {
 
     public UnreadNoticeCountResponse countUnreadNotices(String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
-        return new UnreadNoticeCountResponse(noticeRepository.countUnreadByReceiverId(currentUserId));
+        return new UnreadNoticeCountResponse(noticeMapper.countUnreadByReceiverId(currentUserId));
     }
 
     public void markNoticeRead(Long noticeId, String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
-        int updatedCount = noticeRepository.markRead(noticeId, currentUserId);
+        int updatedCount = noticeMapper.markRead(noticeId, currentUserId);
 
-        if (updatedCount == 0 && !noticeRepository.existsByIdAndReceiverId(noticeId, currentUserId)) {
+        if (updatedCount == 0 && !noticeMapper.existsByIdAndReceiverId(noticeId, currentUserId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "通知不存在");
         }
     }
 
     public UpdateNoticeCountResponse markAllNoticesRead(String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
-        int updatedCount = noticeRepository.markAllRead(currentUserId);
+        int updatedCount = noticeMapper.markAllRead(currentUserId);
         return new UpdateNoticeCountResponse(updatedCount);
     }
 

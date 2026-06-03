@@ -11,11 +11,11 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public class CommentRepository {
+public class CommentMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public CommentRepository(JdbcTemplate jdbcTemplate) {
+    public CommentMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

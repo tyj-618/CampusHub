@@ -6,11 +6,11 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 @Repository
-public class CategoryRepository {
+public class CategoryMapper {
 
     private final JdbcClient jdbcClient;
 
-    public CategoryRepository(JdbcClient jdbcClient) {
+    public CategoryMapper(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
     }
 

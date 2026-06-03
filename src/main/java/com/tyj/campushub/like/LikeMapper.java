@@ -6,11 +6,11 @@ import org.springframework.stereotype.Repository;
 import java.util.Optional;
 
 @Repository
-public class LikeRepository {
+public class LikeMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public LikeRepository(JdbcTemplate jdbcTemplate) {
+    public LikeMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

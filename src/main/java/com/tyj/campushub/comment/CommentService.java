@@ -8,9 +8,9 @@ import com.tyj.campushub.event.DomainEventPublisher;
 import com.tyj.campushub.exception.BusinessException;
 import com.tyj.campushub.post.PageQueryResult;
 import com.tyj.campushub.post.PostDetail;
-import com.tyj.campushub.post.PostRepository;
+import com.tyj.campushub.post.PostMapper;
 import com.tyj.campushub.user.UserProfile;
-import com.tyj.campushub.user.UserRepository;
+import com.tyj.campushub.user.UserMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,17 +20,17 @@ import java.util.List;
 public class CommentService {
 
     private final CurrentUserService currentUserService;
-    private final CommentRepository commentRepository;
-    private final UserRepository userRepository;
-    private final PostRepository postRepository;
+    private final CommentMapper commentMapper;
+    private final UserMapper userMapper;
+    private final PostMapper postMapper;
     private final DomainEventPublisher domainEventPublisher;
 
-    public CommentService(CurrentUserService currentUserService, CommentRepository commentRepository, UserRepository userRepository,
-                          PostRepository postRepository, DomainEventPublisher domainEventPublisher) {
+    public CommentService(CurrentUserService currentUserService, CommentMapper commentMapper, UserMapper userMapper,
+                          PostMapper postMapper, DomainEventPublisher domainEventPublisher) {
         this.currentUserService = currentUserService;
-        this.commentRepository = commentRepository;
-        this.userRepository = userRepository;
-        this.postRepository = postRepository;
+        this.commentMapper = commentMapper;
+        this.userMapper = userMapper;
+        this.postMapper = postMapper;
         this.domainEventPublisher = domainEventPublisher;
     }
 
@@ -39,12 +39,12 @@ public class CommentService {
         Long currentUserId = currentUserService.requireUserId(authorization);
         PostDetail postDetail = findNormalPost(postId);
 
-        Long commentId = commentRepository.saveComment(postId, currentUserId, request.content());
+        Long commentId = commentMapper.saveComment(postId, currentUserId, request.content());
         if (commentId == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "评论创建失败");
         }
 
-        commentRepository.increaseCommentCount(postId);
+        commentMapper.increaseCommentCount(postId);
         domainEventPublisher.publishCommentCreated(new CommentCreatedEvent(postDetail.userId(), currentUserId, postId, commentId));
         return new CreateCommentResponse(commentId);
     }
@@ -52,7 +52,7 @@ public class CommentService {
     public PageResponse<CommentResponse> listPostComments(Long postId, int page, int size) {
         ensureNormalPost(postId);
 
-        PageQueryResult<CommentPageItem> result = commentRepository.findCommentsByPostId(postId, page, size);
+        PageQueryResult<CommentPageItem> result = commentMapper.findCommentsByPostId(postId, page, size);
         List<CommentResponse> records = result.records().stream()
                 .map(CommentResponse::from)
                 .toList();
@@ -66,14 +66,14 @@ public class CommentService {
         CommentDetail commentDetail = findNormalComment(commentId);
         ensureCanDeleteComment(currentUserId, commentDetail);
 
-        commentRepository.softDeleteComment(commentId);
-        commentRepository.decreaseCommentCount(commentDetail.postId());
+        commentMapper.softDeleteComment(commentId);
+        commentMapper.decreaseCommentCount(commentDetail.postId());
     }
 
     public PageResponse<MyCommentResponse> listMyComments(String authorization, int page, int size) {
         Long currentUserId = currentUserService.requireUserId(authorization);
 
-        PageQueryResult<MyCommentItem> result = commentRepository.findCommentsByUserId(currentUserId, page, size);
+        PageQueryResult<MyCommentItem> result = commentMapper.findCommentsByUserId(currentUserId, page, size);
         List<MyCommentResponse> records = result.records().stream()
                 .map(MyCommentResponse::from)
                 .toList();
@@ -82,13 +82,13 @@ public class CommentService {
     }
 
     private void ensureNormalPost(Long postId) {
-        if (!commentRepository.existsNormalPost(postId)) {
+        if (!commentMapper.existsNormalPost(postId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在");
         }
     }
 
     private PostDetail findNormalPost(Long postId) {
-        PostDetail postDetail = postRepository.findDetailById(postId)
+        PostDetail postDetail = postMapper.findDetailById(postId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在"));
 
         if (postDetail.status() != 0) {
@@ -99,7 +99,7 @@ public class CommentService {
     }
 
     private CommentDetail findNormalComment(Long commentId) {
-        CommentDetail commentDetail = commentRepository.findDetailById(commentId)
+        CommentDetail commentDetail = commentMapper.findDetailById(commentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "评论不存在"));
 
         if (commentDetail.status() != 0) {
@@ -114,7 +114,7 @@ public class CommentService {
             return;
         }
 
-        UserProfile currentUser = userRepository.findProfileById(currentUserId)
+        UserProfile currentUser = userMapper.findProfileById(currentUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
 
         if (currentUser.role() != 1) {

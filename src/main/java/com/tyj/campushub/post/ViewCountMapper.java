@@ -4,11 +4,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class ViewCountRepository {
+public class ViewCountMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public ViewCountRepository(JdbcTemplate jdbcTemplate) {
+    public ViewCountMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

@@ -4,7 +4,7 @@ import com.tyj.campushub.auth.CurrentUserService;
 import com.tyj.campushub.common.ErrorCode;
 import com.tyj.campushub.exception.BusinessException;
 import com.tyj.campushub.user.UserProfile;
-import com.tyj.campushub.user.UserRepository;
+import com.tyj.campushub.user.UserMapper;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -16,25 +16,25 @@ public class AdminService {
     private static final int POST_STATUS_HIDDEN = 2;
 
     private final CurrentUserService currentUserService;
-    private final UserRepository userRepository;
-    private final AdminRepository adminRepository;
+    private final UserMapper userMapper;
+    private final AdminMapper adminMapper;
 
-    public AdminService(CurrentUserService currentUserService, UserRepository userRepository, AdminRepository adminRepository) {
+    public AdminService(CurrentUserService currentUserService, UserMapper userMapper, AdminMapper adminMapper) {
         this.currentUserService = currentUserService;
-        this.userRepository = userRepository;
-        this.adminRepository = adminRepository;
+        this.userMapper = userMapper;
+        this.adminMapper = adminMapper;
     }
 
     public void hidePost(Long postId, String authorization) {
         requireAdmin(authorization);
         ensurePostExists(postId);
-        adminRepository.updatePostStatus(postId, POST_STATUS_HIDDEN);
+        adminMapper.updatePostStatus(postId, POST_STATUS_HIDDEN);
     }
 
     public void restorePost(Long postId, String authorization) {
         requireAdmin(authorization);
         ensurePostExists(postId);
-        adminRepository.updatePostStatus(postId, POST_STATUS_NORMAL);
+        adminMapper.updatePostStatus(postId, POST_STATUS_NORMAL);
     }
 
     public void disableUser(Long userId, String authorization) {
@@ -44,18 +44,18 @@ public class AdminService {
         }
 
         ensureUserExists(userId);
-        adminRepository.updateUserStatus(userId, USER_STATUS_DISABLED);
+        adminMapper.updateUserStatus(userId, USER_STATUS_DISABLED);
     }
 
     public void enableUser(Long userId, String authorization) {
         requireAdmin(authorization);
         ensureUserExists(userId);
-        adminRepository.updateUserStatus(userId, USER_STATUS_NORMAL);
+        adminMapper.updateUserStatus(userId, USER_STATUS_NORMAL);
     }
 
     private Long requireAdmin(String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
-        UserProfile currentUser = userRepository.findProfileById(currentUserId)
+        UserProfile currentUser = userMapper.findProfileById(currentUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
 
         if (currentUser.status() != USER_STATUS_NORMAL) {
@@ -70,13 +70,13 @@ public class AdminService {
     }
 
     private void ensurePostExists(Long postId) {
-        if (!adminRepository.existsPost(postId)) {
+        if (!adminMapper.existsPost(postId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在");
         }
     }
 
     private void ensureUserExists(Long userId) {
-        if (!adminRepository.existsUser(userId)) {
+        if (!adminMapper.existsUser(userId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
     }

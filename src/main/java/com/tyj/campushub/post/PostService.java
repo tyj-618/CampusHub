@@ -5,7 +5,7 @@ import com.tyj.campushub.common.ErrorCode;
 import com.tyj.campushub.common.PageResponse;
 import com.tyj.campushub.exception.BusinessException;
 import com.tyj.campushub.user.UserProfile;
-import com.tyj.campushub.user.UserRepository;
+import com.tyj.campushub.user.UserMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,16 +15,16 @@ import java.util.List;
 public class PostService {
 
     private final CurrentUserService currentUserService;
-    private final PostRepository postRepository;
-    private final UserRepository userRepository;
+    private final PostMapper postMapper;
+    private final UserMapper userMapper;
     private final HotPostCache hotPostCache;
     private final ViewCountService viewCountService;
 
-    public PostService(CurrentUserService currentUserService, PostRepository postRepository, UserRepository userRepository,
+    public PostService(CurrentUserService currentUserService, PostMapper postMapper, UserMapper userMapper,
                        HotPostCache hotPostCache, ViewCountService viewCountService) {
         this.currentUserService = currentUserService;
-        this.postRepository = postRepository;
-        this.userRepository = userRepository;
+        this.postMapper = postMapper;
+        this.userMapper = userMapper;
         this.hotPostCache = hotPostCache;
         this.viewCountService = viewCountService;
     }
@@ -34,12 +34,12 @@ public class PostService {
         Long currentUserId = currentUserService.requireUserId(authorization);
         ensureEnabledCategory(request.categoryId());
 
-        Long postId = postRepository.savePost(currentUserId, request);
+        Long postId = postMapper.savePost(currentUserId, request);
         if (postId == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "帖子创建失败");
         }
 
-        postRepository.savePostStat(postId);
+        postMapper.savePostStat(postId);
         return new CreatePostResponse(postId);
     }
 
@@ -48,7 +48,7 @@ public class PostService {
             ensureEnabledCategory(categoryId);
         }
 
-        PageQueryResult<PostListItem> result = postRepository.findPosts(page, size, categoryId, keyword, sort);
+        PageQueryResult<PostListItem> result = postMapper.findPosts(page, size, categoryId, keyword, sort);
         List<PostListItemResponse> records = result.records().stream()
                 .map(PostListItemResponse::from)
                 .toList();
@@ -60,18 +60,18 @@ public class PostService {
         viewCountService.recordView(postId);
 
         boolean liked = currentUserService.findUserId(authorization)
-                .map(userId -> postRepository.existsLike(postId, userId))
+                .map(userId -> postMapper.existsLike(postId, userId))
                 .orElse(false);
 
         return PostDetailResponse.from(postDetail, liked);
     }
 
     public PageResponse<PostListItemResponse> listUserPosts(Long userId, int page, int size) {
-        if (userRepository.findProfileById(userId).isEmpty()) {
+        if (userMapper.findProfileById(userId).isEmpty()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
 
-        PageQueryResult<PostListItem> result = postRepository.findPostsByUserId(userId, page, size);
+        PageQueryResult<PostListItem> result = postMapper.findPostsByUserId(userId, page, size);
         List<PostListItemResponse> records = result.records().stream()
                 .map(PostListItemResponse::from)
                 .toList();
@@ -87,7 +87,7 @@ public class PostService {
     }
 
     private List<PostHotItemResponse> loadHotPosts(int limit, Long categoryId) {
-        return postRepository.findHotPosts(limit, categoryId)
+        return postMapper.findHotPosts(limit, categoryId)
                 .stream()
                 .map(PostHotItemResponse::from)
                 .toList();
@@ -99,18 +99,18 @@ public class PostService {
         PostDetail postDetail = findNormalPost(postId);
         ensureCanManagePost(currentUserId, postDetail.userId());
         ensureEnabledCategory(request.categoryId());
-        postRepository.updatePost(postId, request);
+        postMapper.updatePost(postId, request);
     }
 
     public void deletePost(Long postId, String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
         PostDetail postDetail = findNormalPost(postId);
         ensureCanManagePost(currentUserId, postDetail.userId());
-        postRepository.softDeletePost(postId);
+        postMapper.softDeletePost(postId);
     }
 
     private PostDetail findNormalPost(Long postId) {
-        PostDetail postDetail = postRepository.findDetailById(postId)
+        PostDetail postDetail = postMapper.findDetailById(postId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "帖子不存在"));
 
         if (postDetail.status() != 0) {
@@ -121,7 +121,7 @@ public class PostService {
     }
 
     private void ensureEnabledCategory(Long categoryId) {
-        if (!postRepository.existsEnabledCategory(categoryId)) {
+        if (!postMapper.existsEnabledCategory(categoryId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "分类不存在或已禁用");
         }
     }
@@ -131,7 +131,7 @@ public class PostService {
             return;
         }
 
-        UserProfile currentUser = userRepository.findProfileById(currentUserId)
+        UserProfile currentUser = userMapper.findProfileById(currentUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
 
         if (currentUser.role() != 1) {

@@ -11,11 +11,11 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public class PostRepository {
+public class PostMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public PostRepository(JdbcTemplate jdbcTemplate) {
+    public PostMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

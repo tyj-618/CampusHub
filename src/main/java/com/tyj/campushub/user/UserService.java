@@ -9,11 +9,11 @@ import org.springframework.stereotype.Service;
 public class UserService {
 
     private final CurrentUserService currentUserService;
-    private final UserRepository userRepository;
+    private final UserMapper userMapper;
 
-    public UserService(CurrentUserService currentUserService, UserRepository userRepository) {
+    public UserService(CurrentUserService currentUserService, UserMapper userMapper) {
         this.currentUserService = currentUserService;
-        this.userRepository = userRepository;
+        this.userMapper = userMapper;
     }
 
     public UserProfileResponse getCurrentUser(String authorization) {
@@ -34,7 +34,7 @@ public class UserService {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "昵称不能为空");
         }
 
-        userRepository.updateProfile(currentUserId, nickname, avatarUrl, bio);
+        userMapper.updateProfile(currentUserId, nickname, avatarUrl, bio);
 
         UserProfile updatedProfile = findExistingUser(currentUserId);
         return UserProfileResponse.from(updatedProfile);
@@ -42,8 +42,8 @@ public class UserService {
 
     public PublicUserProfileResponse getPublicUserProfile(Long userId) {
         UserProfile userProfile = findExistingUser(userId);
-        long postCount = userRepository.countNormalPostsByUserId(userId);
-        long commentCount = userRepository.countNormalCommentsByUserId(userId);
+        long postCount = userMapper.countNormalPostsByUserId(userId);
+        long commentCount = userMapper.countNormalCommentsByUserId(userId);
 
         return new PublicUserProfileResponse(
                 userProfile.id(),
@@ -58,7 +58,7 @@ public class UserService {
     }
 
     private UserProfile findExistingUser(Long userId) {
-        return userRepository.findProfileById(userId)
+        return userMapper.findProfileById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
     }
 

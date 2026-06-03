@@ -15,15 +15,15 @@ import java.util.concurrent.atomic.LongAdder;
 @Service
 public class ViewCountService implements InitializingBean, DisposableBean {
 
-    private final ViewCountRepository viewCountRepository;
+    private final ViewCountMapper viewCountMapper;
     private final long flushIntervalSeconds;
     private final Map<Long, LongAdder> pendingViewCounts = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public ViewCountService(
-            ViewCountRepository viewCountRepository,
+            ViewCountMapper viewCountMapper,
             @Value("${campushub.view-count.flush-interval-seconds:10}") long flushIntervalSeconds) {
-        this.viewCountRepository = viewCountRepository;
+        this.viewCountMapper = viewCountMapper;
         this.flushIntervalSeconds = flushIntervalSeconds;
     }
 
@@ -35,7 +35,7 @@ public class ViewCountService implements InitializingBean, DisposableBean {
         for (Map.Entry<Long, LongAdder> entry : pendingViewCounts.entrySet()) {
             long delta = entry.getValue().sumThenReset();
             if (delta > 0) {
-                viewCountRepository.increaseViewCount(entry.getKey(), delta);
+                viewCountMapper.increaseViewCount(entry.getKey(), delta);
             }
         }
     }

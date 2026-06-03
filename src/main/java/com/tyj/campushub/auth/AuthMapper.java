@@ -6,11 +6,11 @@ import org.springframework.stereotype.Repository;
 import java.util.Optional;
 
 @Repository
-public class AuthRepository {
+public class AuthMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public AuthRepository(JdbcTemplate jdbcTemplate) {
+    public AuthMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

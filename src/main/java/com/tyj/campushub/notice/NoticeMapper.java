@@ -8,11 +8,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Repository
-public class NoticeRepository {
+public class NoticeMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public NoticeRepository(JdbcTemplate jdbcTemplate) {
+    public NoticeMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

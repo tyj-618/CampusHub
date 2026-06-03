@@ -4,11 +4,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class AdminRepository {
+public class AdminMapper {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public AdminRepository(JdbcTemplate jdbcTemplate) {
+    public AdminMapper(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

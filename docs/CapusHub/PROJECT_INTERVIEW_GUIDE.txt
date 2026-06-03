@@ -96,7 +96,7 @@ CampusHub 是一个基于 Spring Boot 的轻量级校园论坛后端项目，围
 - common：通用响应和分页。
 - exception：异常处理。
 
-这样的划分比按技术层统一放 controller、service、repository 更适合中小项目。因为面向业务模块时，相关类集中在一起，开发和维护时更容易定位。
+这样的划分比按技术层统一放 controller、service、mapper 更适合中小项目。因为面向业务模块时，相关类集中在一起，开发和维护时更容易定位。
 
 4. 项目中的核心数据表有哪些？
 
@@ -128,7 +128,7 @@ CampusHub 是一个基于 Spring Boot 的轻量级校园论坛后端项目，围
 
 项目采用典型三层架构：
 
-Controller -> Service -> Repository
+Controller -> Service -> Mapper
 
 Controller：
 
@@ -141,10 +141,10 @@ Service：
 
 - 处理业务规则。
 - 校验登录、权限、资源状态。
-- 协调多个 Repository 或事件发布器。
+- 协调多个 Mapper 或事件发布器。
 - 抛出 BusinessException。
 
-Repository：
+Mapper：
 
 - 封装 SQL。
 - 与数据库交互。
@@ -154,7 +154,7 @@ DTO / record：
 
 - Request 定义请求体。
 - Response 定义响应体。
-- 数据库模型定义 Repository 查询结果。
+- 数据库模型定义 Mapper 查询结果。
 
 2. 为什么业务逻辑不写在 Controller？
 
@@ -197,7 +197,7 @@ SpringApplication.run(CampusHubApplication.class, args)
 
 IoC 是控制反转。对象的创建和依赖关系不由程序员手动 new，而是交给 Spring 容器管理。
 
-例如 AuthService 需要 AuthRepository、PasswordEncoder、TokenStore：
+例如 AuthService 需要 AuthMapper、PasswordEncoder、TokenStore：
 
 Spring 会创建这些 Bean，并通过构造方法注入给 AuthService。
 
@@ -213,7 +213,7 @@ DI 是依赖注入，是 IoC 的具体实现方式。
 
 项目主要使用构造器注入：
 
-public AuthService(AuthRepository authRepository, PasswordEncoder passwordEncoder, TokenStore tokenStore)
+public AuthService(AuthMapper authMapper, PasswordEncoder passwordEncoder, TokenStore tokenStore)
 
 构造器注入的优点：
 
@@ -242,7 +242,7 @@ public AuthService(AuthRepository authRepository, PasswordEncoder passwordEncode
 
 一次请求大致流程：
 
-客户端 -> Tomcat -> DispatcherServlet -> HandlerMapping -> Controller 方法 -> Service -> Repository -> 数据库 -> 返回对象 -> HttpMessageConverter 转 JSON -> 客户端。
+客户端 -> Tomcat -> DispatcherServlet -> HandlerMapping -> Controller 方法 -> Service -> Mapper -> 数据库 -> 返回对象 -> HttpMessageConverter 转 JSON -> 客户端。
 
 关键组件：
 
@@ -344,7 +344,7 @@ Spring MVC 在解析 @RequestBody 时，会使用 HttpMessageConverter 将 JSON 
 - @Valid 校验用户名、密码、昵称。
 - AuthService 判断用户名是否存在。
 - PasswordEncoder 对密码加密。
-- AuthRepository 插入 user 表。
+- AuthMapper 插入 user 表。
 - 查询新用户并返回 RegisterResponse。
 
 2. 登录流程
@@ -468,7 +468,7 @@ AuthService.login 中检查 user.status() != 0 时抛出 FORBIDDEN。
 - 依赖少。
 - SQL 透明。
 - 更容易理解底层数据库访问。
-- 适合学习 SQL 和 Repository 分层。
+- 适合学习 SQL 和 Mapper 分层。
 
 缺点：
 
@@ -1029,7 +1029,7 @@ log.error("Unhandled exception", exception)
 - Controller 路由是否正确。
 - 参数校验是否生效。
 - Service 业务是否正确。
-- Repository SQL 是否能执行。
+- Mapper SQL 是否能执行。
 - 数据库状态是否符合预期。
 - 异常响应是否统一。
 
@@ -1122,17 +1122,17 @@ H2 是内存数据库：
 Q1：请介绍一下你的 CampusHub 项目。
 
 A：
-CampusHub 是一个轻量级校园论坛后端项目，主要面向校园交流场景。我围绕论坛核心链路实现了用户认证、帖子、评论、点赞、通知和后台管理功能。项目采用 Spring Boot + Spring JDBC + MySQL 分层开发，Controller 负责接口，Service 负责业务规则，Repository 负责数据库访问。为了提升项目完整度，我还加入了 Redis 热门帖子缓存，并通过 TTL 随机抖动、互斥锁、空结果缓存缓解缓存雪崩、击穿和穿透问题；用 RocketMQ 事件模型解耦评论、点赞和通知；用 JUC 实现浏览量内存累计和定时批量刷库。最后使用 H2 编写集成测试覆盖核心流程和边界场景，并补充了接口文档和 README。
+CampusHub 是一个轻量级校园论坛后端项目，主要面向校园交流场景。我围绕论坛核心链路实现了用户认证、帖子、评论、点赞、通知和后台管理功能。项目采用 Spring Boot + Spring JDBC + MySQL 分层开发，Controller 负责接口，Service 负责业务规则，Mapper 负责数据库访问。为了提升项目完整度，我还加入了 Redis 热门帖子缓存，并通过 TTL 随机抖动、互斥锁、空结果缓存缓解缓存雪崩、击穿和穿透问题；用 RocketMQ 事件模型解耦评论、点赞和通知；用 JUC 实现浏览量内存累计和定时批量刷库。最后使用 H2 编写集成测试覆盖核心流程和边界场景，并补充了接口文档和 README。
 
 Q2：你的项目为什么选择单体架构，而不是微服务？
 
 A：
 这个项目定位是实习简历项目，核心目标是完整实现后端业务闭环。当前业务规模下，单体架构更简单，部署和调试成本低，也能更清楚体现模块分层。项目内部已经按 auth、post、comment、notice 等业务包拆分，边界比较清晰。如果后续访问量和团队规模变大，可以再拆分成用户服务、内容服务、互动服务、通知服务。现在直接上微服务会增加注册中心、网关、分布式事务等复杂度，反而偏离项目目标。
 
-Q3：Controller、Service、Repository 分别负责什么？
+Q3：Controller、Service、Mapper 分别负责什么？
 
 A：
-Controller 负责 HTTP 层，读取请求参数、请求体、请求头，并返回统一响应。Service 负责业务逻辑，例如登录校验、权限校验、资源状态判断、事件发布。Repository 只负责数据库访问，封装 SQL 和结果映射。这样分层后每层职责清楚，业务代码不会堆在 Controller 里，也方便测试和维护。
+Controller 负责 HTTP 层，读取请求参数、请求体、请求头，并返回统一响应。Service 负责业务逻辑，例如登录校验、权限校验、资源状态判断、事件发布。Mapper 只负责数据库访问，封装 SQL 和结果映射。这样分层后每层职责清楚，业务代码不会堆在 Controller 里，也方便测试和维护。
 
 Q4：为什么使用统一响应结构？
 
@@ -1307,7 +1307,7 @@ A：
 Q38：你的通知模块怎么设计？
 
 A：
-通知模块包括 notice 表、NoticeRepository、NoticeService 和 NoticeController。评论和点赞事件最终会调用 NoticeService 创建通知。通知支持分页查询、按已读状态过滤、查询未读数、标记单条已读和全部已读。查询时只查当前登录用户作为 receiver 的通知。
+通知模块包括 notice 表、NoticeMapper、NoticeService 和 NoticeController。评论和点赞事件最终会调用 NoticeService 创建通知。通知支持分页查询、按已读状态过滤、查询未读数、标记单条已读和全部已读。查询时只查当前登录用户作为 receiver 的通知。
 
 Q39：管理员权限是怎么控制的？
 
@@ -1327,7 +1327,7 @@ Service 层会查询资源，如果不存在则抛出 BusinessException(ErrorCod
 Q42：项目中如何实现分页？
 
 A：
-Controller 接收 page 和 size，并用 @Min、@Max 做校验。Repository 中使用 LIMIT ? OFFSET ? 查询当前页数据，同时使用 COUNT(*) 查询总数。Service 再封装成 PageResponse，包含 page、size、total、pages、records。
+Controller 接收 page 和 size，并用 @Min、@Max 做校验。Mapper 中使用 LIMIT ? OFFSET ? 查询当前页数据，同时使用 COUNT(*) 查询总数。Service 再封装成 PageResponse，包含 page、size、total、pages、records。
 
 Q43：分页中 offset 有什么问题？
 
@@ -1337,7 +1337,7 @@ A：
 Q44：你的测试为什么不是只测 Service？
 
 A：
-因为我想验证真实接口链路，包括 Controller 路由、参数校验、异常处理、Service 业务、Repository SQL 和数据库状态。因此使用 @SpringBootTest 启动真实服务，用 HttpClient 发送请求。这比只测 Service 更能发现集成问题。
+因为我想验证真实接口链路，包括 Controller 路由、参数校验、异常处理、Service 业务、Mapper SQL 和数据库状态。因此使用 @SpringBootTest 启动真实服务，用 HttpClient 发送请求。这比只测 Service 更能发现集成问题。
 
 Q45：为什么测试用 H2 而不是 MySQL？
 
@@ -1362,7 +1362,7 @@ A：
 Q49：如果面试官让你现场扩展一个功能，你会怎么做？
 
 A：
-我会先明确需求边界，然后按现有分层扩展。例如新增“收藏帖子”功能，我会建 favorite 表，增加 favorite 包，包含 Controller、Service、Repository、Request/Response；Service 做登录和帖子状态校验；Repository 做唯一索引防重复收藏；接口文档和集成测试同步补充。尽量沿用项目现有结构，不破坏原有风格。
+我会先明确需求边界，然后按现有分层扩展。例如新增“收藏帖子”功能，我会建 favorite 表，增加 favorite 包，包含 Controller、Service、Mapper、Request/Response；Service 做登录和帖子状态校验；Mapper 做唯一索引防重复收藏；接口文档和集成测试同步补充。尽量沿用项目现有结构，不破坏原有风格。
 
 Q50：你从这个项目学到了什么？
 

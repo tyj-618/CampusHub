@@ -7,14 +7,14 @@ import java.util.List;
 @Service
 public class CategoryService {
 
-    private final CategoryRepository categoryRepository;
+    private final CategoryMapper categoryMapper;
 
-    public CategoryService(CategoryRepository categoryRepository) {
-        this.categoryRepository = categoryRepository;
+    public CategoryService(CategoryMapper categoryMapper) {
+        this.categoryMapper = categoryMapper;
     }
 
     public List<CategoryResponse> listEnabledCategories() {
-        return categoryRepository.findEnabledCategories()
+        return categoryMapper.findEnabledCategories()
                 .stream()
                 .map(CategoryResponse::from)
                 .toList();

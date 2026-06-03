@@ -9,37 +9,37 @@ import org.springframework.stereotype.Service;
 @Service
 public class AuthService {
 
-    private final AuthRepository authRepository;
+    private final AuthMapper authMapper;
     private final PasswordEncoder passwordEncoder;
     private final TokenStore tokenStore;
 
-    public AuthService(AuthRepository authRepository, PasswordEncoder passwordEncoder, TokenStore tokenStore) {
-        this.authRepository = authRepository;
+    public AuthService(AuthMapper authMapper, PasswordEncoder passwordEncoder, TokenStore tokenStore) {
+        this.authMapper = authMapper;
         this.passwordEncoder = passwordEncoder;
         this.tokenStore = tokenStore;
     }
 
     public RegisterResponse register(RegisterRequest request) {
-        if (authRepository.existsByUsername(request.username())) {
+        if (authMapper.existsByUsername(request.username())) {
             throw new BusinessException(ErrorCode.USERNAME_EXISTS);
         }
 
         String encodedPassword = passwordEncoder.encode(request.password());
 
         try {
-            authRepository.save(request.username(), encodedPassword, request.nickname());
+            authMapper.save(request.username(), encodedPassword, request.nickname());
         } catch (DuplicateKeyException exception) { // 防止并发情况
             throw new BusinessException(ErrorCode.USERNAME_EXISTS);
         }
 
-        AuthUser user = authRepository.findByUsername(request.username())
+        AuthUser user = authMapper.findByUsername(request.username())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR, "用户注册后查询失败"));
 
         return new RegisterResponse(user.id(), user.username(), user.nickname());
     }
 
     public LoginResponse login(LoginRequest request) {
-        AuthUser user = authRepository.findByUsername(request.username())
+        AuthUser user = authMapper.findByUsername(request.username())
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_FAILED));
 
         if (user.status() != 0) {
