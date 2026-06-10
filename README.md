@@ -1,8 +1,10 @@
 # CampusHub
 
-CampusHub is a pure backend project for a lightweight campus forum. It focuses on common backend engineering capabilities for an internship resume: authentication, user profiles, categories, posts, comments, likes, in-site notices, admin operations, Redis ranking, RocketMQ event decoupling, batched view-count flushing, unified responses, exception handling, and integration tests.
+CampusHub 是一个轻量级校园论坛纯后端项目，基于 Spring Boot 开发，围绕校园交流场景实现用户认证、用户资料、帖子、评论、点赞、站内通知、后台管理等核心功能。
 
-## Tech Stack
+项目重点不是堆叠页面或前端效果，而是完整体现一个后端项目从业务建模、接口设计、分层架构、数据库访问、缓存/排行榜、事件解耦、并发优化到集成测试的工程化过程。
+
+## 技术栈
 
 - Java 17
 - Spring Boot 4
@@ -10,73 +12,73 @@ CampusHub is a pure backend project for a lightweight campus forum. It focuses o
 - Spring Validation
 - Spring JDBC
 - MySQL
-- Redis, optional
-- RocketMQ, optional
-- H2 for tests
+- Redis，可选启用
+- RocketMQ，可选启用
+- H2，测试环境使用
 - JUnit / Spring Boot Test
 
-## Architecture
+## 项目架构
 
-The project uses a clear backend layering style:
+项目采用清晰的后端分层结构：
 
 ```text
 Controller -> Service -> Mapper -> Database
 ```
 
-- Controller: exposes REST APIs and receives request parameters.
-- Service: handles business rules, login checks, permission checks, events, and cache/ranking coordination.
-- Mapper: executes SQL through Spring JDBC and maps query results.
-- Common/Exception: provides `ApiResponse`, `PageResponse`, `ErrorCode`, `BusinessException`, and global exception handling.
+- Controller：负责 REST API 接入，接收请求参数、请求体和请求头。
+- Service：负责业务逻辑、登录校验、权限校验、资源状态判断、事件发布和排行榜协调。
+- Mapper：负责 SQL 执行和数据库结果映射。
+- Common / Exception：负责统一响应结构、分页响应、错误码、业务异常和全局异常处理。
 
-## Modules
+## 功能模块
 
-| Module | Description |
+| 模块 | 说明 |
 | --- | --- |
-| auth | Register, login, logout, token storage, current user lookup |
-| user | Current user profile, public profile, profile update |
-| category | Enabled post category query |
-| post | Post creation, list, detail, update, delete, user posts, hot posts |
-| comment | Comment creation, list, delete, my comments |
-| like | Like, unlike, like status |
-| notice | Comment/like notices, unread count, mark read |
-| admin | Hide/restore posts, disable/enable users |
-| event | Domain event abstraction, sync handling, RocketMQ extension |
-| common | Unified response, pagination response, error codes |
-| exception | Business exception and global exception handler |
+| auth | 用户注册、登录、退出、Token 管理、当前用户识别 |
+| user | 当前用户资料、公开主页、资料修改 |
+| category | 帖子分类查询 |
+| post | 发帖、帖子列表、帖子详情、编辑、删除、用户帖子、热门帖子 |
+| comment | 发表评论、评论列表、删除评论、我的评论 |
+| like | 点赞、取消点赞、查询点赞状态 |
+| notice | 评论通知、点赞通知、未读数、标记已读 |
+| admin | 隐藏/恢复帖子、禁用/启用用户 |
+| event | 领域事件抽象、同步事件处理、RocketMQ 扩展 |
+| common | 统一响应、分页响应、错误码 |
+| exception | 业务异常、全局异常处理 |
 
-## Engineering Highlights
+## 项目亮点
 
-- Uses `Controller-Service-Mapper` layering to keep HTTP handling, business rules, and SQL access separated.
-- Uses BCrypt to hash user passwords and token-based login state management.
-- Provides both in-memory and Redis token stores through the `TokenStore` abstraction.
-- Uses Redis ZSet for the hot post ranking when the `redis` profile is enabled:
+- 使用 `Controller-Service-Mapper` 分层架构，明确接口层、业务层和数据访问层职责。
+- 使用 BCrypt 对用户密码进行哈希存储，避免明文密码落库。
+- 抽象 `TokenStore`，默认使用内存版 Token 存储，启用 Redis 后可切换为 Redis Token 存储，适合多实例扩展。
+- 使用 Redis ZSet 实现热门帖子排行榜：
   - `member = postId`
   - `score = hot_score`
-  - MySQL `post_stat.hot_score` remains the persistent source of truth.
-  - Redis ranking can be rebuilt from MySQL when empty or inconsistent.
-- Uses RocketMQ profile-based event publishing to decouple comments/likes from notice generation.
-- Uses `ConcurrentHashMap + LongAdder + ScheduledExecutorService` to batch post view-count updates and reduce database write pressure.
-- Uses unified response objects, error codes, business exceptions, and global exception handling to keep API behavior consistent.
-- Uses H2 integration tests to verify core API flows and boundary cases without requiring local MySQL, Redis, or RocketMQ.
+  - MySQL `post_stat.hot_score` 作为持久化热度分来源
+  - Redis 排行榜为空或数据不一致时，可从 MySQL 回源重建
+- 使用 RocketMQ 事件模型解耦评论、点赞和站内通知，默认环境下也提供同步事件实现，便于本地开发和测试。
+- 使用 `ConcurrentHashMap + LongAdder + ScheduledExecutorService` 对帖子浏览量进行内存累计和定时批量刷库，降低高频浏览场景下的数据库写压力。
+- 使用统一响应结构、错误码枚举、业务异常和全局异常处理，保证接口返回格式一致。
+- 使用 H2 编写核心接口集成测试，覆盖认证、发帖、评论、点赞、通知和权限边界场景。
 
-## Project Structure
+## 项目结构
 
 ```text
 src/main/java/com/tyj/campushub
-├── admin
-├── auth
-├── category
-├── comment
-├── common
-├── event
-├── exception
-├── like
-├── notice
-├── post
-└── user
+├── admin       后台管理
+├── auth        注册、登录、Token、当前用户识别
+├── category    帖子分类
+├── comment     评论
+├── common      通用响应、分页响应、错误码
+├── event       领域事件、RocketMQ 发布和消费
+├── exception   业务异常、全局异常处理
+├── like        点赞
+├── notice      站内通知
+├── post        帖子、热门排行榜、浏览量批量刷新
+└── user        用户资料
 ```
 
-Important resources:
+重要资源文件：
 
 ```text
 src/main/resources/application.yaml
@@ -88,151 +90,156 @@ src/test/resources/schema.sql
 src/test/resources/data.sql
 ```
 
-## Database Initialization
+## 数据库初始化
 
-Create the database and tables:
+创建数据库和表：
 
 ```sql
 source src/main/resources/db/schema.sql;
 ```
 
-Initialize category data:
+初始化分类数据：
 
 ```sql
 source src/main/resources/db/data.sql;
 ```
 
-When running from a MySQL shell on Windows, you can use absolute paths:
+如果在 Windows 的 MySQL 命令行中执行，可以使用绝对路径：
 
 ```sql
 source D:/GitCode/CampusHub/src/main/resources/db/schema.sql;
 source D:/GitCode/CampusHub/src/main/resources/db/data.sql;
 ```
 
-## Local Run
+## 本地启动
 
-Default startup only requires MySQL.
+默认启动只依赖 MySQL。
 
-Common environment variables:
+常用环境变量：
 
-| Variable | Default | Description |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `SERVER_PORT` | `8080` | Backend server port |
-| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3306/campushub?...` | MySQL URL |
-| `CAMPUSHUB_DB_USERNAME` | `root` | MySQL username |
-| `CAMPUSHUB_DB_PASSWORD` | empty | MySQL password |
-| `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | View-count batch flush interval |
+| `SERVER_PORT` | `8080` | 后端服务端口 |
+| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3306/campushub?...` | MySQL 连接地址 |
+| `CAMPUSHUB_DB_USERNAME` | `root` | MySQL 用户名 |
+| `CAMPUSHUB_DB_PASSWORD` | 空 | MySQL 密码 |
+| `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | 浏览量批量刷库间隔 |
 
-Start with Maven Wrapper:
+启动项目：
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-Windows PowerShell:
+Windows PowerShell：
 
 ```powershell
 .\mvnw.cmd spring-boot:run
 ```
 
-Default base URL:
+默认访问地址：
 
 ```text
 http://localhost:8080
 ```
 
-## Redis Profile
+## Redis 模式
 
-The default profile does not require Redis:
+默认 profile 不依赖 Redis：
 
-- `InMemoryTokenStore` stores login tokens.
-- `NoOpHotPostRankStore` reads hot posts directly from MySQL.
+- `InMemoryTokenStore` 存储登录 Token。
+- `NoOpHotPostRankStore` 直接从 MySQL 查询热门帖子。
 
-Enable the `redis` profile to use Redis:
+启用 `redis` profile 后：
 
-- `RedisTokenStore` stores tokens in Redis with TTL.
-- `RedisHotPostRankStore` uses Redis ZSet for hot post ranking.
+- `RedisTokenStore` 使用 Redis 存储 Token，并设置过期时间。
+- `RedisHotPostRankStore` 使用 Redis ZSet 维护热门帖子排行榜。
 
-Redis environment variables:
+Redis 环境变量：
 
-| Variable | Default | Description |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `CAMPUSHUB_REDIS_HOST` | `localhost` | Redis host |
-| `CAMPUSHUB_REDIS_PORT` | `6379` | Redis port |
-| `CAMPUSHUB_REDIS_PASSWORD` | empty | Redis password |
-| `CAMPUSHUB_REDIS_DATABASE` | `0` | Redis database |
+| `CAMPUSHUB_REDIS_HOST` | `localhost` | Redis 主机 |
+| `CAMPUSHUB_REDIS_PORT` | `6379` | Redis 端口 |
+| `CAMPUSHUB_REDIS_PASSWORD` | 空 | Redis 密码 |
+| `CAMPUSHUB_REDIS_DATABASE` | `0` | Redis 数据库编号 |
 
-Run with Redis:
+启用 Redis：
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=redis
 ```
 
-Windows PowerShell:
+Windows PowerShell：
 
 ```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=redis"
 ```
 
-## RocketMQ Profile
+## RocketMQ 模式
 
-The default profile handles domain events synchronously. Enable `rocketmq` to publish and consume comment/like events asynchronously.
+默认 profile 下，评论和点赞事件同步处理，不依赖 RocketMQ。
 
-RocketMQ settings are in:
+启用 `rocketmq` profile 后：
+
+- `RocketMqDomainEventPublisher` 负责发布事件。
+- `RocketMqEventConsumer` 负责消费事件并生成通知。
+
+RocketMQ 配置文件：
 
 ```text
 src/main/resources/application-rocketmq.yaml
 ```
 
-Common environment variables:
+常用环境变量：
 
-| Variable | Default | Description |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `CAMPUSHUB_ROCKETMQ_NAME_SERVER` | `localhost:9876` | RocketMQ NameServer |
-| `CAMPUSHUB_ROCKETMQ_PRODUCER_GROUP` | `campushub-producer-group` | Producer group |
-| `CAMPUSHUB_COMMENT_TOPIC` | `campushub-comment-event` | Comment event topic |
-| `CAMPUSHUB_LIKE_TOPIC` | `campushub-like-event` | Like event topic |
+| `CAMPUSHUB_ROCKETMQ_PRODUCER_GROUP` | `campushub-producer-group` | 生产者组 |
+| `CAMPUSHUB_COMMENT_TOPIC` | `campushub-comment-event` | 评论事件 Topic |
+| `CAMPUSHUB_LIKE_TOPIC` | `campushub-like-event` | 点赞事件 Topic |
 
-Run with RocketMQ:
+启用 RocketMQ：
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=rocketmq
 ```
 
-Run with Redis and RocketMQ:
+同时启用 Redis 和 RocketMQ：
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=redis,rocketmq
 ```
 
-## Tests
+## 运行测试
 
-Tests use H2 and do not require local MySQL, Redis, or RocketMQ.
+测试环境使用 H2 内存数据库，不依赖本地 MySQL、Redis 或 RocketMQ。
 
 ```bash
 ./mvnw test
 ```
 
-Windows PowerShell:
+Windows PowerShell：
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-Current integration tests cover:
+当前集成测试覆盖：
 
-- Spring context startup
-- Register and login
-- Category query
-- Post creation
-- Comment creation and listing
-- Like and unlike behavior
-- Notice query and unread count
-- Permission and validation boundary cases
+- Spring Boot 上下文启动
+- 用户注册与登录
+- 分类查询
+- 发帖
+- 评论创建与查询
+- 点赞与取消点赞
+- 通知查询与未读数
+- 未登录、重复注册、非法分页、普通用户访问管理接口等边界场景
 
-## Typical API Examples
+## 常见请求示例
 
-Register:
+注册：
 
 ```http
 POST /api/auth/register
@@ -247,7 +254,7 @@ Content-Type: application/json
 }
 ```
 
-Login:
+登录：
 
 ```http
 POST /api/auth/login
@@ -261,7 +268,7 @@ Content-Type: application/json
 }
 ```
 
-Create post:
+发布帖子：
 
 ```http
 POST /api/posts
@@ -272,17 +279,17 @@ Content-Type: application/json
 ```json
 {
   "categoryId": 1,
-  "title": "How should I prepare for final exams?",
-  "content": "Any useful study plan or resource recommendations?"
+  "title": "期末复习资料怎么整理？",
+  "content": "想问问大家期末复习有什么方法。"
 }
 ```
 
-Query hot posts:
+查询热门帖子：
 
 ```http
 GET /api/posts/hot?limit=10
 ```
 
-## Resume Summary
+## 简历描述
 
-CampusHub is a pure Spring Boot backend project for a campus forum. It implements authentication, user profiles, posts, comments, likes, notices, admin operations, Redis ZSet hot ranking, RocketMQ event decoupling, batched view-count flushing, unified API responses, global exception handling, and H2 integration tests. The project is designed as a compact but complete backend system suitable for internship resume presentation and technical interviews.
+CampusHub 是一个基于 Spring Boot 的校园论坛纯后端项目，实现了用户认证、帖子发布、评论互动、点赞、站内通知、后台管理等核心业务。项目采用 `Controller-Service-Mapper` 分层架构，使用统一响应、全局异常处理和参数校验保证接口规范性；使用 Redis ZSet 实现热门帖子排行榜，结合 MySQL `hot_score` 完成持久化兜底和回源重建；通过 RocketMQ 事件模型解耦互动行为与通知生成；使用 JUC 对浏览量进行内存累计和定时批量刷库；并基于 H2 编写集成测试覆盖核心流程和边界场景。
