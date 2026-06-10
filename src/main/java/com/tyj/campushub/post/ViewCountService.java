@@ -16,19 +16,23 @@ import java.util.concurrent.atomic.LongAdder;
 public class ViewCountService implements InitializingBean, DisposableBean {
 
     private final ViewCountMapper viewCountMapper;
+    private final HotPostRankStore hotPostRankStore;
     private final long flushIntervalSeconds;
     private final Map<Long, LongAdder> pendingViewCounts = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public ViewCountService(
             ViewCountMapper viewCountMapper,
+            HotPostRankStore hotPostRankStore,
             @Value("${campushub.view-count.flush-interval-seconds:10}") long flushIntervalSeconds) {
         this.viewCountMapper = viewCountMapper;
+        this.hotPostRankStore = hotPostRankStore;
         this.flushIntervalSeconds = flushIntervalSeconds;
     }
 
-    public void recordView(Long postId) {
+    public void recordView(Long postId, Long categoryId) {
         pendingViewCounts.computeIfAbsent(postId, key -> new LongAdder()).increment();
+        hotPostRankStore.increaseScore(postId, categoryId, HotPostRankStore.VIEW_SCORE);
     }
 
     public void flushPendingViews() {

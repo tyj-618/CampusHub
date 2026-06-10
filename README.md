@@ -1,25 +1,8 @@
 # CampusHub
 
-CampusHub 是一个轻量级校园论坛后端项目，使用 Spring Boot + JDBC 实现。项目目标不是堆功能，而是把一个个人项目常见的后端主链路做完整：认证、用户、分类、帖子、评论、点赞、通知、管理、缓存、事件和测试。
+CampusHub is a pure backend project for a lightweight campus forum. It focuses on common backend engineering capabilities for an internship resume: authentication, user profiles, categories, posts, comments, likes, in-site notices, admin operations, Redis ranking, RocketMQ event decoupling, batched view-count flushing, unified responses, exception handling, and integration tests.
 
-## 功能模块
-
-| 模块 | 说明 |
-| --- | --- |
-| 认证模块 | 用户注册、登录、退出，支持内存 token 和 Redis token 两种存储方式 |
-| 用户模块 | 当前用户资料、公开主页、资料修改 |
-| 分类模块 | 查询启用分类 |
-| 帖子模块 | 发帖、列表、详情、编辑、删除、用户帖子、热门帖子 |
-| 评论模块 | 发表评论、评论列表、删除评论、我的评论 |
-| 点赞模块 | 点赞、取消点赞、查询点赞状态 |
-| 通知模块 | 评论通知、点赞通知、未读数、标记已读 |
-| 管理模块 | 隐藏/恢复帖子，禁用/启用用户 |
-| 缓存模块 | Redis 热门帖子缓存，可选启用 |
-| 事件模块 | 评论和点赞领域事件，默认同步处理，可选 RocketMQ 异步处理 |
-| 浏览量模块 | 内存计数 + 定时批量刷新数据库 |
-| 测试模块 | H2 测试库 + 核心接口集成测试 + 边界场景测试 |
-
-## 技术栈
+## Tech Stack
 
 - Java 17
 - Spring Boot 4
@@ -27,214 +10,229 @@ CampusHub 是一个轻量级校园论坛后端项目，使用 Spring Boot + JDBC
 - Spring Validation
 - Spring JDBC
 - MySQL
-- H2，测试环境使用
-- Redis，可选
-- RocketMQ，可选
-- JUnit 6 / Spring Boot Test
+- Redis, optional
+- RocketMQ, optional
+- H2 for tests
+- JUnit / Spring Boot Test
 
-## 项目结构
+## Architecture
+
+The project uses a clear backend layering style:
+
+```text
+Controller -> Service -> Mapper -> Database
+```
+
+- Controller: exposes REST APIs and receives request parameters.
+- Service: handles business rules, login checks, permission checks, events, and cache/ranking coordination.
+- Mapper: executes SQL through Spring JDBC and maps query results.
+- Common/Exception: provides `ApiResponse`, `PageResponse`, `ErrorCode`, `BusinessException`, and global exception handling.
+
+## Modules
+
+| Module | Description |
+| --- | --- |
+| auth | Register, login, logout, token storage, current user lookup |
+| user | Current user profile, public profile, profile update |
+| category | Enabled post category query |
+| post | Post creation, list, detail, update, delete, user posts, hot posts |
+| comment | Comment creation, list, delete, my comments |
+| like | Like, unlike, like status |
+| notice | Comment/like notices, unread count, mark read |
+| admin | Hide/restore posts, disable/enable users |
+| event | Domain event abstraction, sync handling, RocketMQ extension |
+| common | Unified response, pagination response, error codes |
+| exception | Business exception and global exception handler |
+
+## Engineering Highlights
+
+- Uses `Controller-Service-Mapper` layering to keep HTTP handling, business rules, and SQL access separated.
+- Uses BCrypt to hash user passwords and token-based login state management.
+- Provides both in-memory and Redis token stores through the `TokenStore` abstraction.
+- Uses Redis ZSet for the hot post ranking when the `redis` profile is enabled:
+  - `member = postId`
+  - `score = hot_score`
+  - MySQL `post_stat.hot_score` remains the persistent source of truth.
+  - Redis ranking can be rebuilt from MySQL when empty or inconsistent.
+- Uses RocketMQ profile-based event publishing to decouple comments/likes from notice generation.
+- Uses `ConcurrentHashMap + LongAdder + ScheduledExecutorService` to batch post view-count updates and reduce database write pressure.
+- Uses unified response objects, error codes, business exceptions, and global exception handling to keep API behavior consistent.
+- Uses H2 integration tests to verify core API flows and boundary cases without requiring local MySQL, Redis, or RocketMQ.
+
+## Project Structure
 
 ```text
 src/main/java/com/tyj/campushub
-├── admin       管理接口
-├── auth        注册、登录、token、当前用户识别
-├── category    帖子分类
-├── comment     评论
-├── common      通用响应、分页响应、错误码
-├── event       领域事件、RocketMQ 发布和消费
-├── exception   业务异常、全局异常处理
-├── like        点赞
-├── notice      站内通知
-├── post        帖子、热门缓存、浏览量批量更新
-└── user        用户资料
+├── admin
+├── auth
+├── category
+├── comment
+├── common
+├── event
+├── exception
+├── like
+├── notice
+├── post
+└── user
 ```
 
-## 接口文档
-
-完整 REST API 文档见：
+Important resources:
 
 ```text
-docs/api/REST_API.md
+src/main/resources/application.yaml
+src/main/resources/application-rocketmq.yaml
+src/main/resources/db/schema.sql
+src/main/resources/db/data.sql
+src/test/resources/application-test.yaml
+src/test/resources/schema.sql
+src/test/resources/data.sql
 ```
 
-文档包含统一响应结构、错误码、请求参数、响应字段和完整接口清单。
+## Database Initialization
 
-## 环境要求
-
-最小启动只需要：
-
-- JDK 17+
-- Maven，项目已带 Maven Wrapper
-- MySQL 8.x
-
-可选增强能力：
-
-- Redis，用于 token 和热门帖子缓存
-- RocketMQ，用于评论/点赞事件异步通知
-
-## 数据库初始化
-
-1. 创建数据库和表：
+Create the database and tables:
 
 ```sql
 source src/main/resources/db/schema.sql;
 ```
 
-2. 初始化分类数据：
+Initialize category data:
 
 ```sql
 source src/main/resources/db/data.sql;
 ```
 
-如果在命令行中执行，可以先进入 MySQL：
-
-```bash
-mysql -u root -p
-```
-
-然后执行：
+When running from a MySQL shell on Windows, you can use absolute paths:
 
 ```sql
 source D:/GitCode/CampusHub/src/main/resources/db/schema.sql;
 source D:/GitCode/CampusHub/src/main/resources/db/data.sql;
 ```
 
-## 本地启动
+## Local Run
 
-默认配置读取 `src/main/resources/application.yaml`。
+Default startup only requires MySQL.
 
-常用环境变量：
+Common environment variables:
 
-| 环境变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `SERVER_PORT` | `8080` | 服务端口 |
-| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3306/campushub?...` | MySQL 连接地址 |
-| `CAMPUSHUB_DB_USERNAME` | `root` | MySQL 用户名 |
-| `CAMPUSHUB_DB_PASSWORD` | 空 | MySQL 密码 |
-| `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | 浏览量批量刷库间隔 |
+| `SERVER_PORT` | `8080` | Backend server port |
+| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3306/campushub?...` | MySQL URL |
+| `CAMPUSHUB_DB_USERNAME` | `root` | MySQL username |
+| `CAMPUSHUB_DB_PASSWORD` | empty | MySQL password |
+| `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | View-count batch flush interval |
 
-启动：
+Start with Maven Wrapper:
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 .\mvnw.cmd spring-boot:run
 ```
 
-启动后默认访问：
+Default base URL:
 
 ```text
 http://localhost:8080
 ```
 
-## 启用 Redis
+## Redis Profile
 
-默认 profile 不依赖 Redis：
+The default profile does not require Redis:
 
-- token 使用 `InMemoryTokenStore`
-- 热门帖子缓存使用 `NoOpHotPostCache`
+- `InMemoryTokenStore` stores login tokens.
+- `NoOpHotPostRankStore` reads hot posts directly from MySQL.
 
-启用 Redis profile 后：
+Enable the `redis` profile to use Redis:
 
-- token 使用 `RedisTokenStore`
-- 热门帖子缓存使用 `RedisHotPostCache`
+- `RedisTokenStore` stores tokens in Redis with TTL.
+- `RedisHotPostRankStore` uses Redis ZSet for hot post ranking.
 
-Redis 配置：
+Redis environment variables:
 
-| 环境变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `CAMPUSHUB_REDIS_HOST` | `localhost` | Redis 主机 |
-| `CAMPUSHUB_REDIS_PORT` | `6379` | Redis 端口 |
-| `CAMPUSHUB_REDIS_PASSWORD` | 空 | Redis 密码 |
+| `CAMPUSHUB_REDIS_HOST` | `localhost` | Redis host |
+| `CAMPUSHUB_REDIS_PORT` | `6379` | Redis port |
+| `CAMPUSHUB_REDIS_PASSWORD` | empty | Redis password |
 | `CAMPUSHUB_REDIS_DATABASE` | `0` | Redis database |
-| `CAMPUSHUB_HOT_POST_TTL_SECONDS` | `300` | 热门帖子缓存时间 |
-| `CAMPUSHUB_HOT_POST_TTL_JITTER_SECONDS` | `60` | 热门帖子缓存随机过期抖动时间 |
 
-启动：
+Run with Redis:
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=redis
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=redis"
 ```
 
-## 启用 RocketMQ
+## RocketMQ Profile
 
-默认 profile 不依赖 RocketMQ，评论和点赞事件会同步处理，便于本地开发。
+The default profile handles domain events synchronously. Enable `rocketmq` to publish and consume comment/like events asynchronously.
 
-启用 `rocketmq` profile 后：
-
-- `RocketMqDomainEventPublisher` 负责发送事件
-- `RocketMqEventConsumer` 负责消费事件并生成通知
-
-RocketMQ 配置在：
+RocketMQ settings are in:
 
 ```text
 src/main/resources/application-rocketmq.yaml
 ```
 
-常用环境变量：
+Common environment variables:
 
-| 环境变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
 | `CAMPUSHUB_ROCKETMQ_NAME_SERVER` | `localhost:9876` | RocketMQ NameServer |
-| `CAMPUSHUB_ROCKETMQ_PRODUCER_GROUP` | `campushub-producer-group` | 生产者组 |
-| `CAMPUSHUB_COMMENT_TOPIC` | `campushub-comment-event` | 评论事件 Topic |
-| `CAMPUSHUB_LIKE_TOPIC` | `campushub-like-event` | 点赞事件 Topic |
+| `CAMPUSHUB_ROCKETMQ_PRODUCER_GROUP` | `campushub-producer-group` | Producer group |
+| `CAMPUSHUB_COMMENT_TOPIC` | `campushub-comment-event` | Comment event topic |
+| `CAMPUSHUB_LIKE_TOPIC` | `campushub-like-event` | Like event topic |
 
-启动：
+Run with RocketMQ:
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=rocketmq
 ```
 
-同时启用 Redis 和 RocketMQ：
+Run with Redis and RocketMQ:
 
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=redis,rocketmq
 ```
 
-Windows PowerShell：
+## Tests
 
-```powershell
-.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=redis,rocketmq"
-```
-
-## 运行测试
-
-测试环境使用 H2 内存数据库，不需要本地 MySQL、Redis、RocketMQ。
+Tests use H2 and do not require local MySQL, Redis, or RocketMQ.
 
 ```bash
 ./mvnw test
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-当前测试覆盖：
+Current integration tests cover:
 
-- Spring Boot 上下文启动
-- 注册、登录、分类、发帖、评论、点赞、通知主流程
-- 未登录发帖
-- 重复注册
-- 非法分页参数
-- 普通用户访问管理接口
-- 重复点赞和重复取消点赞
+- Spring context startup
+- Register and login
+- Category query
+- Post creation
+- Comment creation and listing
+- Like and unlike behavior
+- Notice query and unread count
+- Permission and validation boundary cases
 
-## 典型请求示例
+## Typical API Examples
 
-注册：
+Register:
 
 ```http
 POST /api/auth/register
@@ -245,11 +243,11 @@ Content-Type: application/json
 {
   "username": "alice",
   "password": "123456",
-  "nickname": "小艾"
+  "nickname": "Alice"
 }
 ```
 
-登录：
+Login:
 
 ```http
 POST /api/auth/login
@@ -263,7 +261,7 @@ Content-Type: application/json
 }
 ```
 
-发帖：
+Create post:
 
 ```http
 POST /api/posts
@@ -274,48 +272,17 @@ Content-Type: application/json
 ```json
 {
   "categoryId": 1,
-  "title": "高数复习资料怎么整理？",
-  "content": "想问问大家期末复习有什么方法。"
+  "title": "How should I prepare for final exams?",
+  "content": "Any useful study plan or resource recommendations?"
 }
 ```
 
-## 已完成状态
+Query hot posts:
 
-当前项目已经具备一个轻量论坛后端的完整闭环：
+```http
+GET /api/posts/hot?limit=10
+```
 
-- 用户可以注册、登录、发帖、评论、点赞
-- 帖子作者可以收到评论和点赞通知
-- 管理员可以处理帖子和用户
-- 热门帖子支持缓存扩展
-- 评论/点赞支持事件化扩展
-- 浏览量采用批量刷库降低写压力
-- 有接口文档和集成测试兜底
+## Resume Summary
 
-## Redis 缓存优化说明
-
-热门帖子接口使用 Cache Aside 模式：
-
-1. 先查 Redis 热门帖子缓存。
-2. 命中则直接返回。
-3. 未命中时尝试获取短期互斥锁。
-4. 获取锁的请求回源 MySQL 查询热门帖子，并写入 Redis。
-5. 未获取锁的请求短暂等待后再查一次缓存，仍未命中则直接回源返回。
-
-对应解决的问题：
-
-| 问题 | 当前做法 | 说明 |
-| --- | --- | --- |
-| 缓存雪崩 | TTL 增加随机抖动 | 避免大量热门缓存同一时间过期 |
-| 缓存击穿 | Redis 短期互斥锁 | 避免同一个热点 key 失效时大量请求同时打到 MySQL |
-| 缓存穿透 | 空列表也写入缓存，并在业务层校验分类是否存在 | 避免无数据的合法查询反复回源；非法分类直接返回 404 |
-
-这是一版适合个人项目的轻量实现，没有引入复杂中间件或 Lua 脚本。面试时可以说明：生产级释放锁更推荐使用 Lua 保证原子性，或者使用 Redisson。
-
-## 后续优化方向
-
-- 细化管理员权限，例如禁止管理员封禁其他管理员
-- 补充更多边界测试，例如删除不存在资源、禁用用户登录、隐藏帖子不可访问
-- 引入 OpenAPI/Swagger 自动生成接口文档
-- 使用 Lua 或 Redisson 进一步增强 Redis 锁释放的原子性
-- 增强 RocketMQ 消息可靠性，例如重试、幂等、死信队列
-- 增加 Docker Compose，统一启动 MySQL、Redis、RocketMQ
+CampusHub is a pure Spring Boot backend project for a campus forum. It implements authentication, user profiles, posts, comments, likes, notices, admin operations, Redis ZSet hot ranking, RocketMQ event decoupling, batched view-count flushing, unified API responses, global exception handling, and H2 integration tests. The project is designed as a compact but complete backend system suitable for internship resume presentation and technical interviews.

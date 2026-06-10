@@ -6,6 +6,7 @@ import com.tyj.campushub.common.PageResponse;
 import com.tyj.campushub.event.CommentCreatedEvent;
 import com.tyj.campushub.event.DomainEventPublisher;
 import com.tyj.campushub.exception.BusinessException;
+import com.tyj.campushub.post.HotPostRankStore;
 import com.tyj.campushub.post.PageQueryResult;
 import com.tyj.campushub.post.PostDetail;
 import com.tyj.campushub.post.PostMapper;
@@ -23,14 +24,16 @@ public class CommentService {
     private final CommentMapper commentMapper;
     private final UserMapper userMapper;
     private final PostMapper postMapper;
+    private final HotPostRankStore hotPostRankStore;
     private final DomainEventPublisher domainEventPublisher;
 
     public CommentService(CurrentUserService currentUserService, CommentMapper commentMapper, UserMapper userMapper,
-                          PostMapper postMapper, DomainEventPublisher domainEventPublisher) {
+                          PostMapper postMapper, HotPostRankStore hotPostRankStore, DomainEventPublisher domainEventPublisher) {
         this.currentUserService = currentUserService;
         this.commentMapper = commentMapper;
         this.userMapper = userMapper;
         this.postMapper = postMapper;
+        this.hotPostRankStore = hotPostRankStore;
         this.domainEventPublisher = domainEventPublisher;
     }
 
@@ -45,6 +48,7 @@ public class CommentService {
         }
 
         commentMapper.increaseCommentCount(postId);
+        hotPostRankStore.increaseScore(postId, postDetail.categoryId(), HotPostRankStore.COMMENT_SCORE);
         domainEventPublisher.publishCommentCreated(new CommentCreatedEvent(postDetail.userId(), currentUserId, postId, commentId));
         return new CreateCommentResponse(commentId);
     }
@@ -68,6 +72,13 @@ public class CommentService {
 
         commentMapper.softDeleteComment(commentId);
         commentMapper.decreaseCommentCount(commentDetail.postId());
+        postMapper.findDetailById(commentDetail.postId())
+                .filter(postDetail -> postDetail.status() == 0)
+                .ifPresent(postDetail -> hotPostRankStore.decreaseScore(
+                        commentDetail.postId(),
+                        postDetail.categoryId(),
+                        HotPostRankStore.COMMENT_SCORE
+                ));
     }
 
     public PageResponse<MyCommentResponse> listMyComments(String authorization, int page, int size) {

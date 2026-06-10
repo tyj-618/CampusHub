@@ -7,7 +7,10 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -131,6 +134,35 @@ public class PostMapper {
         params.add(limit);
         params.add(0);
         return jdbcTemplate.query(sql, this::mapPostListItem, params.toArray());
+    }
+
+    public List<PostListItem> findHotPostsByIds(List<Long> postIds, Long categoryId) {
+        if (postIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<Object> params = new ArrayList<>(postIds);
+        String placeholders = String.join(", ", postIds.stream().map(id -> "?").toList());
+        String categoryFilter = "";
+        if (categoryId != null) {
+            categoryFilter = " AND p.category_id = ?";
+            params.add(categoryId);
+        }
+
+        String sql = buildListSql(" WHERE p.status = 0 AND p.id IN (" + placeholders + ")" + categoryFilter,
+                "ps.hot_score DESC, p.created_at DESC");
+        params.add(postIds.size());
+        params.add(0);
+
+        Map<Long, Integer> order = new HashMap<>();
+        for (int i = 0; i < postIds.size(); i++) {
+            order.put(postIds.get(i), i);
+        }
+
+        List<PostListItem> records = jdbcTemplate.query(sql, this::mapPostListItem, params.toArray());
+        return records.stream()
+                .sorted(Comparator.comparingInt(item -> order.getOrDefault(item.id(), Integer.MAX_VALUE)))
+                .toList();
     }
 
     public void updatePost(Long postId, UpdatePostRequest request) {

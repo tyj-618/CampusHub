@@ -17,15 +17,15 @@ public class PostService {
     private final CurrentUserService currentUserService;
     private final PostMapper postMapper;
     private final UserMapper userMapper;
-    private final HotPostCache hotPostCache;
+    private final HotPostRankStore hotPostRankStore;
     private final ViewCountService viewCountService;
 
     public PostService(CurrentUserService currentUserService, PostMapper postMapper, UserMapper userMapper,
-                       HotPostCache hotPostCache, ViewCountService viewCountService) {
+                       HotPostRankStore hotPostRankStore, ViewCountService viewCountService) {
         this.currentUserService = currentUserService;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
-        this.hotPostCache = hotPostCache;
+        this.hotPostRankStore = hotPostRankStore;
         this.viewCountService = viewCountService;
     }
 
@@ -57,7 +57,7 @@ public class PostService {
 
     public PostDetailResponse getPostDetail(Long postId, String authorization) {
         PostDetail postDetail = findNormalPost(postId);
-        viewCountService.recordView(postId);
+        viewCountService.recordView(postId, postDetail.categoryId());
 
         boolean liked = currentUserService.findUserId(authorization)
                 .map(userId -> postMapper.existsLike(postId, userId))
@@ -83,7 +83,7 @@ public class PostService {
             ensureEnabledCategory(categoryId);
         }
 
-        return hotPostCache.getOrLoad(limit, categoryId, () -> loadHotPosts(limit, categoryId));
+        return hotPostRankStore.listHotPosts(limit, categoryId, () -> loadHotPosts(limit, categoryId));
     }
 
     private List<PostHotItemResponse> loadHotPosts(int limit, Long categoryId) {
@@ -100,6 +100,7 @@ public class PostService {
         ensureCanManagePost(currentUserId, postDetail.userId());
         ensureEnabledCategory(request.categoryId());
         postMapper.updatePost(postId, request);
+        hotPostRankStore.moveCategory(postId, postDetail.categoryId(), request.categoryId(), postDetail.hotScore());
     }
 
     public void deletePost(Long postId, String authorization) {
@@ -107,6 +108,7 @@ public class PostService {
         PostDetail postDetail = findNormalPost(postId);
         ensureCanManagePost(currentUserId, postDetail.userId());
         postMapper.softDeletePost(postId);
+        hotPostRankStore.removePost(postId, postDetail.categoryId());
     }
 
     private PostDetail findNormalPost(Long postId) {

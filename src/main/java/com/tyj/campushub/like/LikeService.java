@@ -5,6 +5,7 @@ import com.tyj.campushub.common.ErrorCode;
 import com.tyj.campushub.event.DomainEventPublisher;
 import com.tyj.campushub.event.PostLikedEvent;
 import com.tyj.campushub.exception.BusinessException;
+import com.tyj.campushub.post.HotPostRankStore;
 import com.tyj.campushub.post.PostDetail;
 import com.tyj.campushub.post.PostMapper;
 import org.springframework.dao.DuplicateKeyException;
@@ -17,13 +18,15 @@ public class LikeService {
     private final CurrentUserService currentUserService;
     private final LikeMapper likeMapper;
     private final PostMapper postMapper;
+    private final HotPostRankStore hotPostRankStore;
     private final DomainEventPublisher domainEventPublisher;
 
     public LikeService(CurrentUserService currentUserService, LikeMapper likeMapper, PostMapper postMapper,
-                       DomainEventPublisher domainEventPublisher) {
+                       HotPostRankStore hotPostRankStore, DomainEventPublisher domainEventPublisher) {
         this.currentUserService = currentUserService;
         this.likeMapper = likeMapper;
         this.postMapper = postMapper;
+        this.hotPostRankStore = hotPostRankStore;
         this.domainEventPublisher = domainEventPublisher;
     }
 
@@ -53,6 +56,7 @@ public class LikeService {
         }
 
         likeMapper.increaseLikeCount(postId);
+        hotPostRankStore.increaseScore(postId, postDetail.categoryId(), HotPostRankStore.LIKE_SCORE);
         domainEventPublisher.publishPostLiked(new PostLikedEvent(postDetail.userId(), currentUserId, postId));
         return new LikeResponse(true, likeMapper.findLikeCount(postId));
     }
@@ -60,7 +64,7 @@ public class LikeService {
     @Transactional
     public LikeResponse unlikePost(Long postId, String authorization) {
         Long currentUserId = currentUserService.requireUserId(authorization);
-        ensureNormalPost(postId);
+        PostDetail postDetail = findNormalPost(postId);
 
         LikeRecord likeRecord = likeMapper.findByPostIdAndUserId(postId, currentUserId).orElse(null);
         if (likeRecord == null || likeRecord.status() == 1) {
@@ -69,6 +73,7 @@ public class LikeService {
 
         likeMapper.cancelLike(likeRecord.id());
         likeMapper.decreaseLikeCount(postId);
+        hotPostRankStore.decreaseScore(postId, postDetail.categoryId(), HotPostRankStore.LIKE_SCORE);
         return new LikeResponse(false, likeMapper.findLikeCount(postId));
     }
 
