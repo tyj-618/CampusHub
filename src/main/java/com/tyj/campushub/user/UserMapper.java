@@ -1,57 +1,37 @@
 package com.tyj.campushub.user;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.UserEntity;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.Optional;
 
-@Repository
-public class UserMapper {
+public interface UserMapper extends BaseMapper<UserEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
+    @Select("""
+            SELECT id, username, nickname, avatar_url AS avatarUrl, bio, role, status,
+                   created_at AS createdAt, updated_at AS updatedAt
+            FROM `user`
+            WHERE id = #{userId}
+            """)
+    Optional<UserProfile> findProfileById(@Param("userId") Long userId);
 
-    public UserMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Update("""
+            UPDATE `user`
+            SET nickname = #{nickname}, avatar_url = #{avatarUrl}, bio = #{bio}
+            WHERE id = #{userId}
+            """)
+    void updateProfile(
+            @Param("userId") Long userId,
+            @Param("nickname") String nickname,
+            @Param("avatarUrl") String avatarUrl,
+            @Param("bio") String bio);
 
-    public Optional<UserProfile> findProfileById(Long userId) {
-        String sql = """
-                SELECT id, username, nickname, avatar_url, bio, role, status, created_at, updated_at
-                FROM `user`
-                WHERE id = ?
-                """;
+    @Select("SELECT COUNT(*) FROM post WHERE user_id = #{userId} AND status = 0")
+    long countNormalPostsByUserId(@Param("userId") Long userId);
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new UserProfile(
-                rs.getLong("id"),
-                rs.getString("username"),
-                rs.getString("nickname"),
-                rs.getString("avatar_url"),
-                rs.getString("bio"),
-                rs.getInt("role"),
-                rs.getInt("status"),
-                rs.getTimestamp("created_at").toLocalDateTime(),
-                rs.getTimestamp("updated_at").toLocalDateTime()
-        ), userId).stream().findFirst();
-    }
-
-    public void updateProfile(Long userId, String nickname, String avatarUrl, String bio) {
-        String sql = """
-                UPDATE `user`
-                SET nickname = ?, avatar_url = ?, bio = ?
-                WHERE id = ?
-                """;
-        jdbcTemplate.update(sql, nickname, avatarUrl, bio, userId);
-    }
-
-    public long countNormalPostsByUserId(Long userId) {
-        String sql = "SELECT COUNT(*) FROM post WHERE user_id = ? AND status = 0";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, userId);
-        return count == null ? 0 : count;
-    }
-
-    public long countNormalCommentsByUserId(Long userId) {
-        String sql = "SELECT COUNT(*) FROM `comment` WHERE user_id = ? AND status = 0";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, userId);
-        return count == null ? 0 : count;
-    }
+    @Select("SELECT COUNT(*) FROM `comment` WHERE user_id = #{userId} AND status = 0")
+    long countNormalCommentsByUserId(@Param("userId") Long userId);
 }

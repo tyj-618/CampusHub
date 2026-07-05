@@ -83,9 +83,11 @@ CREATE TABLE IF NOT EXISTS notice (
     post_id BIGINT DEFAULT NULL COMMENT '关联帖子ID',
     comment_id BIGINT DEFAULT NULL COMMENT '关联评论ID',
     type TINYINT NOT NULL COMMENT '通知类型：1-评论，2-点赞',
+    event_key VARCHAR(128) NOT NULL COMMENT '业务事件幂等键',
     content VARCHAR(255) NOT NULL COMMENT '通知内容',
     read_status TINYINT NOT NULL DEFAULT 0 COMMENT '阅读状态：0-未读，1-已读',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY uk_event_key (event_key),
     KEY idx_receiver_read_created (receiver_id, read_status, created_at),
     KEY idx_receiver_created (receiver_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内通知表';

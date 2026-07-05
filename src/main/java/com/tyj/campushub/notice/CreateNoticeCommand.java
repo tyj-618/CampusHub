@@ -6,6 +6,7 @@ public record CreateNoticeCommand(
         Long postId,
         Long commentId,
         Integer type,
+        String eventKey,
         String content
 ) {
 }

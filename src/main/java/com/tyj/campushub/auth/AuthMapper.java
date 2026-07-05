@@ -1,48 +1,35 @@
 package com.tyj.campushub.auth;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.UserEntity;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.Optional;
 
-@Repository
-public class AuthMapper {
+public interface AuthMapper extends BaseMapper<UserEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
+    @Select("SELECT COUNT(*) FROM `user` WHERE username = #{username}")
+    long countByUsername(@Param("username") String username);
 
-    public AuthMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    default boolean existsByUsername(String username) {
+        return countByUsername(username) > 0;
     }
 
-    public boolean existsByUsername(String username) {
-        String sql = "SELECT COUNT(*) FROM `user` WHERE username = ?";
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, username);
-        return count != null && count > 0;
-    }
+    @Insert("""
+            INSERT INTO `user` (username, password, nickname)
+            VALUES (#{username}, #{encodedPassword}, #{nickname})
+            """)
+    void save(
+            @Param("username") String username,
+            @Param("encodedPassword") String encodedPassword,
+            @Param("nickname") String nickname);
 
-    public void save(String username, String encodedPassword, String nickname) {
-        String sql = """
-                INSERT INTO `user` (username, password, nickname)
-                VALUES (?, ?, ?)
-                """;
-        jdbcTemplate.update(sql, username, encodedPassword, nickname);
-    }
-
-    public Optional<AuthUser> findByUsername(String username) {
-        String sql = """
-                SELECT id, username, password, nickname, avatar_url, role, status
-                FROM `user`
-                WHERE username = ?
-                """;
-
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new AuthUser(
-                rs.getLong("id"),
-                rs.getString("username"),
-                rs.getString("password"),
-                rs.getString("nickname"),
-                rs.getString("avatar_url"),
-                rs.getInt("role"),
-                rs.getInt("status")
-        ), username).stream().findFirst();
-    }
+    @Select("""
+            SELECT id, username, password, nickname, avatar_url AS avatarUrl, role, status
+            FROM `user`
+            WHERE username = #{username}
+            """)
+    Optional<AuthUser> findByUsername(@Param("username") String username);
 }

@@ -1,104 +1,94 @@
 package com.tyj.campushub.notice;
 
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.NoticeEntity;
 import com.tyj.campushub.post.PageQueryResult;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.SelectProvider;
+import org.apache.ibatis.annotations.Update;
+import org.springframework.dao.DuplicateKeyException;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
-@Repository
-public class NoticeMapper {
+public interface NoticeMapper extends BaseMapper<NoticeEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public NoticeMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    default void saveNotice(CreateNoticeCommand command) {
+        try {
+            insertNotice(command);
+        } catch (DuplicateKeyException ignored) {
+            // Idempotent event consumption: the same comment/like event may be delivered more than once.
+        }
     }
 
-    public void saveNotice(CreateNoticeCommand command) {
-        String sql = """
-                INSERT INTO notice (receiver_id, sender_id, post_id, comment_id, type, content)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """;
-        jdbcTemplate.update(
-                sql,
-                command.receiverId(),
-                command.senderId(),
-                command.postId(),
-                command.commentId(),
-                command.type(),
-                command.content()
-        );
+    @Insert("""
+            INSERT INTO notice (receiver_id, sender_id, post_id, comment_id, type, event_key, content)
+            VALUES (#{command.receiverId}, #{command.senderId}, #{command.postId}, #{command.commentId},
+                    #{command.type}, #{command.eventKey}, #{command.content})
+            """)
+    void insertNotice(@Param("command") CreateNoticeCommand command);
+
+    @SelectProvider(type = NoticeSqlProvider.class, method = "countNotices")
+    long countNotices(@Param("receiverId") Long receiverId, @Param("readStatus") Integer readStatus);
+
+    @SelectProvider(type = NoticeSqlProvider.class, method = "selectNotices")
+    List<NoticeItem> selectNotices(@Param("receiverId") Long receiverId,
+                                   @Param("readStatus") Integer readStatus,
+                                   @Param("limit") int limit,
+                                   @Param("offset") int offset);
+
+    default PageQueryResult<NoticeItem> findNoticesByReceiverId(Long receiverId, int page, int size, Integer readStatus) {
+        long total = countNotices(receiverId, readStatus);
+        List<NoticeItem> records = selectNotices(receiverId, readStatus, size, (page - 1) * size);
+        return new PageQueryResult<>(total, records);
     }
 
-    public PageQueryResult<NoticeItem> findNoticesByReceiverId(Long receiverId, int page, int size, Integer readStatus) {
-        List<Object> params = new ArrayList<>();
-        String whereClause = buildWhereClause(params, receiverId, readStatus);
+    @Select("SELECT COUNT(*) FROM notice WHERE receiver_id = #{receiverId} AND read_status = 0")
+    long countUnreadByReceiverId(@Param("receiverId") Long receiverId);
 
-        String countSql = "SELECT COUNT(*) FROM notice n" + whereClause;
-        Long total = jdbcTemplate.queryForObject(countSql, Long.class, params.toArray());
+    @Update("UPDATE notice SET read_status = 1 WHERE id = #{noticeId} AND receiver_id = #{receiverId} AND read_status = 0")
+    int markRead(@Param("noticeId") Long noticeId, @Param("receiverId") Long receiverId);
 
-        String sql = """
-                SELECT n.id, n.receiver_id, n.sender_id,
-                       u.nickname AS sender_nickname, u.avatar_url AS sender_avatar_url,
-                       n.post_id, n.comment_id, n.type, n.content, n.read_status, n.created_at
-                FROM notice n
-                JOIN `user` u ON n.sender_id = u.id
-                """ + whereClause + " ORDER BY n.created_at DESC, n.id DESC LIMIT ? OFFSET ?";
+    @Update("UPDATE notice SET read_status = 1 WHERE receiver_id = #{receiverId} AND read_status = 0")
+    int markAllRead(@Param("receiverId") Long receiverId);
 
-        List<Object> queryParams = new ArrayList<>(params);
-        queryParams.add(size);
-        queryParams.add((page - 1) * size);
+    @Select("SELECT COUNT(*) FROM notice WHERE id = #{noticeId} AND receiver_id = #{receiverId}")
+    long countByIdAndReceiverId(@Param("noticeId") Long noticeId, @Param("receiverId") Long receiverId);
 
-        List<NoticeItem> records = jdbcTemplate.query(sql, (rs, rowNum) -> new NoticeItem(
-                rs.getLong("id"),
-                rs.getLong("receiver_id"),
-                rs.getLong("sender_id"),
-                rs.getString("sender_nickname"),
-                rs.getString("sender_avatar_url"),
-                rs.getObject("post_id", Long.class),
-                rs.getObject("comment_id", Long.class),
-                rs.getInt("type"),
-                rs.getString("content"),
-                rs.getInt("read_status"),
-                rs.getTimestamp("created_at").toLocalDateTime()
-        ), queryParams.toArray());
-
-        return new PageQueryResult<>(total == null ? 0 : total, records);
+    default boolean existsByIdAndReceiverId(Long noticeId, Long receiverId) {
+        return countByIdAndReceiverId(noticeId, receiverId) > 0;
     }
 
-    public long countUnreadByReceiverId(Long receiverId) {
-        String sql = "SELECT COUNT(*) FROM notice WHERE receiver_id = ? AND read_status = 0";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, receiverId);
-        return count == null ? 0 : count;
-    }
-
-    public int markRead(Long noticeId, Long receiverId) {
-        String sql = "UPDATE notice SET read_status = 1 WHERE id = ? AND receiver_id = ? AND read_status = 0";
-        return jdbcTemplate.update(sql, noticeId, receiverId);
-    }
-
-    public int markAllRead(Long receiverId) {
-        String sql = "UPDATE notice SET read_status = 1 WHERE receiver_id = ? AND read_status = 0";
-        return jdbcTemplate.update(sql, receiverId);
-    }
-
-    public boolean existsByIdAndReceiverId(Long noticeId, Long receiverId) {
-        String sql = "SELECT COUNT(*) FROM notice WHERE id = ? AND receiver_id = ?";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, noticeId, receiverId);
-        return count != null && count > 0;
-    }
-
-    private String buildWhereClause(List<Object> params, Long receiverId, Integer readStatus) {
-        StringBuilder where = new StringBuilder(" WHERE n.receiver_id = ?");
-        params.add(receiverId);
-
-        if (readStatus != null) {
-            where.append(" AND n.read_status = ?");
-            params.add(readStatus);
+    class NoticeSqlProvider {
+        public String countNotices(Map<String, Object> params) {
+            return """
+                    SELECT COUNT(*)
+                    FROM notice n
+                    """ + whereClause(params);
         }
 
-        return where.toString();
+        public String selectNotices(Map<String, Object> params) {
+            return """
+                    SELECT n.id, n.receiver_id AS receiverId, n.sender_id AS senderId,
+                           u.nickname AS senderNickname, u.avatar_url AS senderAvatarUrl,
+                           n.post_id AS postId, n.comment_id AS commentId, n.type, n.content,
+                           n.read_status AS readStatus, n.created_at AS createdAt
+                    FROM notice n
+                    JOIN `user` u ON n.sender_id = u.id
+                    """ + whereClause(params) + """
+                     ORDER BY n.created_at DESC, n.id DESC
+                     LIMIT #{limit} OFFSET #{offset}
+                    """;
+        }
+
+        private String whereClause(Map<String, Object> params) {
+            StringBuilder where = new StringBuilder(" WHERE n.receiver_id = #{receiverId}");
+            if (params.get("readStatus") != null) {
+                where.append(" AND n.read_status = #{readStatus}");
+            }
+            return where.toString();
+        }
     }
 }

@@ -1,29 +1,19 @@
 package com.tyj.campushub.category;
 
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.CategoryEntity;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-@Repository
-public class CategoryMapper {
+public interface CategoryMapper extends BaseMapper<CategoryEntity> {
 
-    private final JdbcClient jdbcClient;
-
-    public CategoryMapper(JdbcClient jdbcClient) {
-        this.jdbcClient = jdbcClient;
-    }
-
-    public List<Category> findEnabledCategories() {
-        String sql = """
-                SELECT id, name, code, sort_order, status, created_at, updated_at
-                FROM category
-                WHERE status = 0
-                ORDER BY sort_order ASC, id ASC
-                """;
-
-        return jdbcClient.sql(sql)
-                .query(Category.class)
-                .list();
-    }
+    @Select("""
+            SELECT id, name, code, sort_order AS sortOrder, status,
+                   created_at AS createdAt, updated_at AS updatedAt
+            FROM category
+            WHERE status = 0
+            ORDER BY sort_order ASC, id ASC
+            """)
+    List<Category> findEnabledCategories();
 }

@@ -19,9 +19,18 @@ spring:
     init:
       mode: never
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
 server:
   port: ${SERVER_PORT:8080}
 
 campushub:
   view-count:
     flush-interval-seconds: ${CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS:10}
+  hot-post-cache:
+    ttl-seconds: ${CAMPUSHUB_HOT_POST_CACHE_TTL_SECONDS:300}
+    jitter-seconds: ${CAMPUSHUB_HOT_POST_CACHE_JITTER_SECONDS:60}
+    empty-ttl-seconds: ${CAMPUSHUB_HOT_POST_EMPTY_CACHE_TTL_SECONDS:30}
+    rebuild-lock-ttl-seconds: ${CAMPUSHUB_HOT_POST_REBUILD_LOCK_TTL_SECONDS:10}

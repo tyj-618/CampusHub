@@ -2,11 +2,15 @@ package com.tyj.campushub.post;
 
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 @Component
@@ -15,13 +19,29 @@ public class RedisHotPostRankStore implements HotPostRankStore {
 
     private static final String ALL_POSTS_KEY = "campushub:rank:post:hot:all";
     private static final String CATEGORY_KEY_PREFIX = "campushub:rank:post:hot:category:";
+    private static final String EMPTY_KEY_SUFFIX = ":empty";
+    private static final String LOCK_KEY_SUFFIX = ":rebuild-lock";
 
     private final StringRedisTemplate stringRedisTemplate;
     private final PostMapper postMapper;
+    private final Duration rankCacheTtl;
+    private final int rankCacheJitterSeconds;
+    private final Duration emptyCacheTtl;
+    private final Duration rebuildLockTtl;
 
-    public RedisHotPostRankStore(StringRedisTemplate stringRedisTemplate, PostMapper postMapper) {
+    public RedisHotPostRankStore(
+            StringRedisTemplate stringRedisTemplate,
+            PostMapper postMapper,
+            @Value("${campushub.hot-post-cache.ttl-seconds:300}") long rankCacheTtlSeconds,
+            @Value("${campushub.hot-post-cache.jitter-seconds:60}") int rankCacheJitterSeconds,
+            @Value("${campushub.hot-post-cache.empty-ttl-seconds:30}") long emptyCacheTtlSeconds,
+            @Value("${campushub.hot-post-cache.rebuild-lock-ttl-seconds:10}") long rebuildLockTtlSeconds) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.postMapper = postMapper;
+        this.rankCacheTtl = Duration.ofSeconds(rankCacheTtlSeconds);
+        this.rankCacheJitterSeconds = Math.max(rankCacheJitterSeconds, 0);
+        this.emptyCacheTtl = Duration.ofSeconds(emptyCacheTtlSeconds);
+        this.rebuildLockTtl = Duration.ofSeconds(rebuildLockTtlSeconds);
     }
 
     @Override
@@ -29,6 +49,9 @@ public class RedisHotPostRankStore implements HotPostRankStore {
         String key = buildKey(categoryId);
         Set<String> postIdValues = stringRedisTemplate.opsForZSet().reverseRange(key, 0, limit - 1L);
         if (postIdValues == null || postIdValues.isEmpty()) {
+            if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(emptyKey(key)))) {
+                return List.of();
+            }
             return reloadFromDatabase(key, dbLoader);
         }
 
@@ -41,6 +64,7 @@ public class RedisHotPostRankStore implements HotPostRankStore {
         if (hotPosts.size() != postIds.size()) {
             return reloadFromDatabase(key, dbLoader);
         }
+        refreshRankTtl(key);
         return hotPosts;
     }
 
@@ -79,12 +103,31 @@ public class RedisHotPostRankStore implements HotPostRankStore {
     }
 
     private List<PostHotItemResponse> reloadFromDatabase(String key, Supplier<List<PostHotItemResponse>> dbLoader) {
-        List<PostHotItemResponse> hotPosts = dbLoader.get();
-        stringRedisTemplate.delete(key);
-        for (PostHotItemResponse hotPost : hotPosts) {
-            stringRedisTemplate.opsForZSet().add(key, hotPost.id().toString(), hotPost.hotScore());
+        String lockToken = UUID.randomUUID().toString();
+        Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey(key), lockToken, rebuildLockTtl);
+        if (!Boolean.TRUE.equals(locked)) {
+            return dbLoader.get();
         }
-        return hotPosts;
+
+        try {
+            List<PostHotItemResponse> hotPosts = dbLoader.get();
+            stringRedisTemplate.delete(key);
+            stringRedisTemplate.delete(emptyKey(key));
+            if (hotPosts.isEmpty()) {
+                stringRedisTemplate.opsForValue().set(emptyKey(key), "1", emptyCacheTtl);
+                return hotPosts;
+            }
+            for (PostHotItemResponse hotPost : hotPosts) {
+                stringRedisTemplate.opsForZSet().add(key, hotPost.id().toString(), hotPost.hotScore());
+            }
+            refreshRankTtl(key);
+            return hotPosts;
+        } finally {
+            String currentToken = stringRedisTemplate.opsForValue().get(lockKey(key));
+            if (lockToken.equals(currentToken)) {
+                stringRedisTemplate.delete(lockKey(key));
+            }
+        }
     }
 
     private void incrementIfPresent(String key, Long postId, double delta) {
@@ -122,5 +165,20 @@ public class RedisHotPostRankStore implements HotPostRankStore {
 
     private String buildCategoryKey(Long categoryId) {
         return CATEGORY_KEY_PREFIX + categoryId;
+    }
+
+    private String emptyKey(String key) {
+        return key + EMPTY_KEY_SUFFIX;
+    }
+
+    private String lockKey(String key) {
+        return key + LOCK_KEY_SUFFIX;
+    }
+
+    private void refreshRankTtl(String key) {
+        long jitter = rankCacheJitterSeconds == 0
+                ? 0
+                : ThreadLocalRandom.current().nextInt(rankCacheJitterSeconds + 1);
+        stringRedisTemplate.expire(key, rankCacheTtl.plusSeconds(jitter));
     }
 }

@@ -85,9 +85,11 @@ CREATE TABLE notice (
     post_id BIGINT DEFAULT NULL,
     comment_id BIGINT DEFAULT NULL,
     type TINYINT NOT NULL,
+    event_key VARCHAR(128) NOT NULL,
     content VARCHAR(255) NOT NULL,
     read_status TINYINT NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_event_key (event_key),
     KEY idx_receiver_read_created (receiver_id, read_status, created_at),
     KEY idx_receiver_created (receiver_id, created_at)
 );
