@@ -34,6 +34,7 @@ public class NoticeService {
                 postId,
                 commentId,
                 TYPE_COMMENT,
+                buildCommentEventKey(receiverId, senderId, postId, commentId),
                 "你的帖子收到了新的评论"
         ));
     }
@@ -49,6 +50,7 @@ public class NoticeService {
                 postId,
                 null,
                 TYPE_LIKE,
+                buildLikeEventKey(receiverId, senderId, postId),
                 "你的帖子收到了新的点赞"
         ));
     }
@@ -89,5 +91,13 @@ public class NoticeService {
         if (readStatus != null && readStatus != 0 && readStatus != 1) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "通知阅读状态只能是 0 或 1");
         }
+    }
+
+    private String buildCommentEventKey(Long receiverId, Long senderId, Long postId, Long commentId) {
+        return "comment:" + receiverId + ":" + senderId + ":" + postId + ":" + commentId;
+    }
+
+    private String buildLikeEventKey(Long receiverId, Long senderId, Long postId) {
+        return "like:" + receiverId + ":" + senderId + ":" + postId;
     }
 }

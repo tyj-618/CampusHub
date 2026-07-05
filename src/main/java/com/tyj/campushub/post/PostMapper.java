@@ -1,255 +1,195 @@
 package com.tyj.campushub.post;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.PostEntity;
+import com.tyj.campushub.common.entity.PostStatEntity;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.SelectProvider;
+import org.apache.ibatis.annotations.Update;
 
-import java.sql.PreparedStatement;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-@Repository
-public class PostMapper {
+public interface PostMapper extends BaseMapper<PostEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
+    @Select("SELECT COUNT(*) FROM category WHERE id = #{categoryId} AND status = 0")
+    long countEnabledCategory(@Param("categoryId") Long categoryId);
 
-    public PostMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    default boolean existsEnabledCategory(Long categoryId) {
+        return countEnabledCategory(categoryId) > 0;
     }
 
-    public boolean existsEnabledCategory(Long categoryId) {
-        String sql = "SELECT COUNT(*) FROM category WHERE id = ? AND status = 0";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, categoryId);
-        return count != null && count > 0;
+    default Long savePost(Long userId, CreatePostRequest request) {
+        PostEntity post = new PostEntity();
+        post.setUserId(userId);
+        post.setCategoryId(request.categoryId());
+        post.setTitle(request.title().trim());
+        post.setContent(request.content().trim());
+        insert(post);
+        return post.getId();
     }
 
-    public Long savePost(Long userId, CreatePostRequest request) {
-        String sql = """
-                INSERT INTO post (user_id, category_id, title, content)
-                VALUES (?, ?, ?, ?)
-                """;
+    @Insert("INSERT INTO post_stat (post_id) VALUES (#{postId})")
+    void savePostStat(@Param("postId") Long postId);
 
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, new String[]{"id"});
-            ps.setLong(1, userId);
-            ps.setLong(2, request.categoryId());
-            ps.setString(3, request.title().trim());
-            ps.setString(4, request.content().trim());
-            return ps;
-        }, keyHolder);
+    @Select("""
+            SELECT p.id, p.user_id AS userId, p.category_id AS categoryId, p.title, p.content, p.status,
+                   p.created_at AS createdAt, p.updated_at AS updatedAt,
+                   c.name AS categoryName, c.code AS categoryCode,
+                   u.nickname AS authorNickname, u.avatar_url AS authorAvatarUrl, u.role AS authorRole,
+                   ps.view_count AS viewCount, ps.like_count AS likeCount,
+                   ps.comment_count AS commentCount, ps.hot_score AS hotScore
+            FROM post p
+            JOIN category c ON p.category_id = c.id
+            JOIN `user` u ON p.user_id = u.id
+            JOIN post_stat ps ON p.id = ps.post_id
+            WHERE p.id = #{postId}
+            """)
+    PostDetail selectDetailById(@Param("postId") Long postId);
 
-        Number key = keyHolder.getKey();
-        return key == null ? null : key.longValue();
+    default Optional<PostDetail> findDetailById(Long postId) {
+        return Optional.ofNullable(selectDetailById(postId));
     }
 
-    public void savePostStat(Long postId) {
-        String sql = "INSERT INTO post_stat (post_id) VALUES (?)";
-        jdbcTemplate.update(sql, postId);
-    }
+    @Update("""
+            UPDATE post_stat
+            SET view_count = view_count + 1,
+                hot_score = hot_score + 1
+            WHERE post_id = #{postId}
+            """)
+    void increaseViewCount(@Param("postId") Long postId);
 
-    public Optional<PostDetail> findDetailById(Long postId) {
-        String sql = """
-                SELECT p.id, p.user_id, p.category_id, p.title, p.content, p.status,
-                       p.created_at, p.updated_at,
-                       c.name AS category_name, c.code AS category_code,
-                       u.nickname AS author_nickname, u.avatar_url AS author_avatar_url, u.role AS author_role,
-                       ps.view_count, ps.like_count, ps.comment_count, ps.hot_score
-                FROM post p
-                JOIN category c ON p.category_id = c.id
-                JOIN `user` u ON p.user_id = u.id
-                JOIN post_stat ps ON p.id = ps.post_id
-                WHERE p.id = ?
-                """;
+    @SelectProvider(type = PostSqlProvider.class, method = "countPosts")
+    long countPosts(@Param("categoryId") Long categoryId,
+                    @Param("keyword") String keyword,
+                    @Param("userId") Long userId);
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new PostDetail(
-                rs.getLong("id"),
-                rs.getLong("user_id"),
-                rs.getLong("category_id"),
-                rs.getString("title"),
-                rs.getString("content"),
-                rs.getInt("status"),
-                rs.getTimestamp("created_at").toLocalDateTime(),
-                rs.getTimestamp("updated_at").toLocalDateTime(),
-                rs.getString("category_name"),
-                rs.getString("category_code"),
-                rs.getString("author_nickname"),
-                rs.getString("author_avatar_url"),
-                rs.getInt("author_role"),
-                rs.getInt("view_count"),
-                rs.getInt("like_count"),
-                rs.getInt("comment_count"),
-                rs.getDouble("hot_score")
-        ), postId).stream().findFirst();
-    }
+    @SelectProvider(type = PostSqlProvider.class, method = "findPosts")
+    List<PostListItem> selectPosts(@Param("limit") int limit,
+                                   @Param("offset") int offset,
+                                   @Param("categoryId") Long categoryId,
+                                   @Param("keyword") String keyword,
+                                   @Param("userId") Long userId,
+                                   @Param("sort") String sort,
+                                   @Param("ids") List<Long> ids);
 
-    public void increaseViewCount(Long postId) {
-        String sql = """
-                UPDATE post_stat
-                SET view_count = view_count + 1,
-                    hot_score = hot_score + 1
-                WHERE post_id = ?
-                """;
-        jdbcTemplate.update(sql, postId);
-    }
-
-    public PageQueryResult<PostListItem> findPosts(int page, int size, Long categoryId, String keyword, String sort) {
-        List<Object> params = new ArrayList<>();
-        String whereClause = buildPostWhereClause(params, categoryId, keyword, null);
-        long total = countPosts(whereClause, params);
-
-        String orderBy = "hot".equalsIgnoreCase(sort) ? "ps.hot_score DESC, p.created_at DESC" : "p.created_at DESC";
-        String sql = buildListSql(whereClause, orderBy);
-        List<Object> queryParams = new ArrayList<>(params);
-        queryParams.add(size);
-        queryParams.add((page - 1) * size);
-
-        List<PostListItem> records = jdbcTemplate.query(sql, this::mapPostListItem, queryParams.toArray());
+    default PageQueryResult<PostListItem> findPosts(int page, int size, Long categoryId, String keyword, String sort) {
+        long total = countPosts(categoryId, keyword, null);
+        List<PostListItem> records = selectPosts(size, (page - 1) * size, categoryId, keyword, null, sort, null);
         return new PageQueryResult<>(total, records);
     }
 
-    public PageQueryResult<PostListItem> findPostsByUserId(Long userId, int page, int size) {
-        List<Object> params = new ArrayList<>();
-        String whereClause = buildPostWhereClause(params, null, null, userId);
-        long total = countPosts(whereClause, params);
-
-        String sql = buildListSql(whereClause, "p.created_at DESC");
-        List<Object> queryParams = new ArrayList<>(params);
-        queryParams.add(size);
-        queryParams.add((page - 1) * size);
-
-        List<PostListItem> records = jdbcTemplate.query(sql, this::mapPostListItem, queryParams.toArray());
+    default PageQueryResult<PostListItem> findPostsByUserId(Long userId, int page, int size) {
+        long total = countPosts(null, null, userId);
+        List<PostListItem> records = selectPosts(size, (page - 1) * size, null, null, userId, null, null);
         return new PageQueryResult<>(total, records);
     }
 
-    public List<PostListItem> findHotPosts(int limit, Long categoryId) {
-        List<Object> params = new ArrayList<>();
-        String whereClause = buildPostWhereClause(params, categoryId, null, null);
-        String sql = buildListSql(whereClause, "ps.hot_score DESC, p.created_at DESC");
-        params.add(limit);
-        params.add(0);
-        return jdbcTemplate.query(sql, this::mapPostListItem, params.toArray());
+    default List<PostListItem> findHotPosts(int limit, Long categoryId) {
+        return selectPosts(limit, 0, categoryId, null, null, "hot", null);
     }
 
-    public List<PostListItem> findHotPostsByIds(List<Long> postIds, Long categoryId) {
+    default List<PostListItem> findHotPostsByIds(List<Long> postIds, Long categoryId) {
         if (postIds.isEmpty()) {
             return List.of();
         }
-
-        List<Object> params = new ArrayList<>(postIds);
-        String placeholders = String.join(", ", postIds.stream().map(id -> "?").toList());
-        String categoryFilter = "";
-        if (categoryId != null) {
-            categoryFilter = " AND p.category_id = ?";
-            params.add(categoryId);
-        }
-
-        String sql = buildListSql(" WHERE p.status = 0 AND p.id IN (" + placeholders + ")" + categoryFilter,
-                "ps.hot_score DESC, p.created_at DESC");
-        params.add(postIds.size());
-        params.add(0);
-
         Map<Long, Integer> order = new HashMap<>();
         for (int i = 0; i < postIds.size(); i++) {
             order.put(postIds.get(i), i);
         }
-
-        List<PostListItem> records = jdbcTemplate.query(sql, this::mapPostListItem, params.toArray());
-        return records.stream()
+        return selectPosts(postIds.size(), 0, categoryId, null, null, "hot", postIds).stream()
                 .sorted(Comparator.comparingInt(item -> order.getOrDefault(item.id(), Integer.MAX_VALUE)))
                 .toList();
     }
 
-    public void updatePost(Long postId, UpdatePostRequest request) {
-        String sql = """
-                UPDATE post
-                SET category_id = ?, title = ?, content = ?
-                WHERE id = ?
-                """;
-        jdbcTemplate.update(sql, request.categoryId(), request.title().trim(), request.content().trim(), postId);
+    @Update("""
+            UPDATE post
+            SET category_id = #{request.categoryId}, title = #{request.title}, content = #{request.content}
+            WHERE id = #{postId}
+            """)
+    void updatePostRaw(@Param("postId") Long postId, @Param("request") UpdatePostRequest request);
+
+    default void updatePost(Long postId, UpdatePostRequest request) {
+        updatePostRaw(postId, new UpdatePostRequest(
+                request.categoryId(),
+                request.title().trim(),
+                request.content().trim()
+        ));
     }
 
-    public void softDeletePost(Long postId) {
-        String sql = "UPDATE post SET status = 1 WHERE id = ?";
-        jdbcTemplate.update(sql, postId);
+    @Update("UPDATE post SET status = 1 WHERE id = #{postId}")
+    void softDeletePost(@Param("postId") Long postId);
+
+    @Select("""
+            SELECT COUNT(*)
+            FROM post_like
+            WHERE post_id = #{postId} AND user_id = #{userId} AND status = 0
+            """)
+    long countLike(@Param("postId") Long postId, @Param("userId") Long userId);
+
+    default boolean existsLike(Long postId, Long userId) {
+        return countLike(postId, userId) > 0;
     }
 
-    public boolean existsLike(Long postId, Long userId) {
-        String sql = "SELECT COUNT(*) FROM post_like WHERE post_id = ? AND user_id = ? AND status = 0";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, postId, userId);
-        return count != null && count > 0;
-    }
-
-    private long countPosts(String whereClause, List<Object> params) {
-        String sql = """
-                SELECT COUNT(*)
-                FROM post p
-                JOIN category c ON p.category_id = c.id
-                JOIN `user` u ON p.user_id = u.id
-                JOIN post_stat ps ON p.id = ps.post_id
-                """ + whereClause;
-        Long total = jdbcTemplate.queryForObject(sql, Long.class, params.toArray());
-        return total == null ? 0 : total;
-    }
-
-    private String buildListSql(String whereClause, String orderBy) {
-        return """
-                SELECT p.id, p.title, p.content, p.category_id,
-                       c.name AS category_name, c.code AS category_code,
-                       u.id AS author_id, u.nickname AS author_nickname, u.avatar_url AS author_avatar_url,
-                       ps.view_count, ps.like_count, ps.comment_count, ps.hot_score,
-                       p.created_at
-                FROM post p
-                JOIN category c ON p.category_id = c.id
-                JOIN `user` u ON p.user_id = u.id
-                JOIN post_stat ps ON p.id = ps.post_id
-                """ + whereClause + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?";
-    }
-
-    private String buildPostWhereClause(List<Object> params, Long categoryId, String keyword, Long userId) {
-        StringBuilder where = new StringBuilder(" WHERE p.status = 0");
-
-        if (categoryId != null) {
-            where.append(" AND p.category_id = ?");
-            params.add(categoryId);
+    class PostSqlProvider {
+        public String countPosts(Map<String, Object> params) {
+            return """
+                    <script>
+                    SELECT COUNT(*)
+                    FROM post p
+                    JOIN category c ON p.category_id = c.id
+                    JOIN `user` u ON p.user_id = u.id
+                    JOIN post_stat ps ON p.id = ps.post_id
+                    """ + whereClause(params) + """
+                    </script>
+                    """;
         }
 
-        if (keyword != null && !keyword.isBlank()) {
-            where.append(" AND (p.title LIKE ? OR p.content LIKE ?)");
-            String likeKeyword = "%" + keyword.trim() + "%";
-            params.add(likeKeyword);
-            params.add(likeKeyword);
+        public String findPosts(Map<String, Object> params) {
+            String orderBy = "hot".equalsIgnoreCase((String) params.get("sort"))
+                    ? "ps.hot_score DESC, p.created_at DESC"
+                    : "p.created_at DESC";
+            return """
+                    <script>
+                    SELECT p.id, p.title, p.content, p.category_id AS categoryId,
+                           c.name AS categoryName, c.code AS categoryCode,
+                           u.id AS authorId, u.nickname AS authorNickname, u.avatar_url AS authorAvatarUrl,
+                           ps.view_count AS viewCount, ps.like_count AS likeCount,
+                           ps.comment_count AS commentCount, ps.hot_score AS hotScore,
+                           p.created_at AS createdAt
+                    FROM post p
+                    JOIN category c ON p.category_id = c.id
+                    JOIN `user` u ON p.user_id = u.id
+                    JOIN post_stat ps ON p.id = ps.post_id
+                    """ + whereClause(params) + """
+                     ORDER BY """ + orderBy + """
+                     LIMIT #{limit} OFFSET #{offset}
+                    </script>
+                    """;
         }
 
-        if (userId != null) {
-            where.append(" AND p.user_id = ?");
-            params.add(userId);
+        private String whereClause(Map<String, Object> params) {
+            StringBuilder where = new StringBuilder(" WHERE p.status = 0");
+            if (params.get("categoryId") != null) {
+                where.append(" AND p.category_id = #{categoryId}");
+            }
+            String keyword = (String) params.get("keyword");
+            if (keyword != null && !keyword.isBlank()) {
+                where.append(" AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))");
+            }
+            if (params.get("userId") != null) {
+                where.append(" AND p.user_id = #{userId}");
+            }
+            if (params.get("ids") instanceof List<?> ids && !ids.isEmpty()) {
+                where.append(" AND p.id IN ");
+                where.append("<foreach collection=\"ids\" item=\"id\" open=\"(\" separator=\",\" close=\")\">#{id}</foreach>");
+            }
+            return where.toString();
         }
-
-        return where.toString();
-    }
-
-    private PostListItem mapPostListItem(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
-        return new PostListItem(
-                rs.getLong("id"),
-                rs.getString("title"),
-                rs.getString("content"),
-                rs.getLong("category_id"),
-                rs.getString("category_name"),
-                rs.getString("category_code"),
-                rs.getLong("author_id"),
-                rs.getString("author_nickname"),
-                rs.getString("author_avatar_url"),
-                rs.getInt("view_count"),
-                rs.getInt("like_count"),
-                rs.getInt("comment_count"),
-                rs.getDouble("hot_score"),
-                rs.getTimestamp("created_at").toLocalDateTime()
-        );
     }
 }

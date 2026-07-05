@@ -1,36 +1,30 @@
 package com.tyj.campushub.admin;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.UserEntity;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
-@Repository
-public class AdminMapper {
+public interface AdminMapper extends BaseMapper<UserEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
+    @Select("SELECT COUNT(*) FROM post WHERE id = #{postId}")
+    long countPostById(@Param("postId") Long postId);
 
-    public AdminMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    default boolean existsPost(Long postId) {
+        return countPostById(postId) > 0;
     }
 
-    public boolean existsPost(Long postId) {
-        String sql = "SELECT COUNT(*) FROM post WHERE id = ?";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, postId);
-        return count != null && count > 0;
+    @Update("UPDATE post SET status = #{status} WHERE id = #{postId}")
+    void updatePostStatus(@Param("postId") Long postId, @Param("status") int status);
+
+    @Select("SELECT COUNT(*) FROM `user` WHERE id = #{userId}")
+    long countUserById(@Param("userId") Long userId);
+
+    default boolean existsUser(Long userId) {
+        return countUserById(userId) > 0;
     }
 
-    public void updatePostStatus(Long postId, int status) {
-        String sql = "UPDATE post SET status = ? WHERE id = ?";
-        jdbcTemplate.update(sql, status, postId);
-    }
-
-    public boolean existsUser(Long userId) {
-        String sql = "SELECT COUNT(*) FROM `user` WHERE id = ?";
-        Long count = jdbcTemplate.queryForObject(sql, Long.class, userId);
-        return count != null && count > 0;
-    }
-
-    public void updateUserStatus(Long userId, int status) {
-        String sql = "UPDATE `user` SET status = ? WHERE id = ?";
-        jdbcTemplate.update(sql, status, userId);
-    }
+    @Update("UPDATE `user` SET status = #{status} WHERE id = #{userId}")
+    void updateUserStatus(@Param("userId") Long userId, @Param("status") int status);
 }

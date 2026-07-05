@@ -1,24 +1,17 @@
 package com.tyj.campushub.post;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.tyj.campushub.common.entity.PostStatEntity;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Update;
 
-@Repository
-public class ViewCountMapper {
+public interface ViewCountMapper extends BaseMapper<PostStatEntity> {
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public ViewCountMapper(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
-
-    public void increaseViewCount(Long postId, long delta) {
-        String sql = """
-                UPDATE post_stat
-                SET view_count = view_count + ?,
-                    hot_score = hot_score + ?
-                WHERE post_id = ?
-                """;
-        jdbcTemplate.update(sql, delta, delta, postId);
-    }
+    @Update("""
+            UPDATE post_stat
+            SET view_count = view_count + #{delta},
+                hot_score = hot_score + #{delta}
+            WHERE post_id = #{postId}
+            """)
+    void increaseViewCount(@Param("postId") Long postId, @Param("delta") long delta);
 }
