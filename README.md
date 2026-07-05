@@ -10,7 +10,7 @@ CampusHub 是一个轻量级校园论坛纯后端项目，基于 Spring Boot 开
 - Spring Boot 4
 - Spring Web
 - Spring Validation
-- Spring JDBC
+- MyBatis-Plus
 - MySQL
 - Redis，可选启用
 - RocketMQ，可选启用
@@ -22,12 +22,12 @@ CampusHub 是一个轻量级校园论坛纯后端项目，基于 Spring Boot 开
 项目采用清晰的后端分层结构：
 
 ```text
-Controller -> Service -> Mapper -> Database
+Controller -> Service -> Mapper(MyBatis-Plus) -> Database
 ```
 
 - Controller：负责 REST API 接入，接收请求参数、请求体和请求头。
 - Service：负责业务逻辑、登录校验、权限校验、资源状态判断、事件发布和排行榜协调。
-- Mapper：负责 SQL 执行和数据库结果映射。
+- Mapper：基于 MyBatis-Plus 负责单表 CRUD、复杂查询 SQL 和数据库结果映射。
 - Common / Exception：负责统一响应结构、分页响应、错误码、业务异常和全局异常处理。
 
 ## 功能模块
@@ -49,6 +49,7 @@ Controller -> Service -> Mapper -> Database
 ## 项目亮点
 
 - 使用 `Controller-Service-Mapper` 分层架构，明确接口层、业务层和数据访问层职责。
+- 使用 MyBatis-Plus 重构数据访问层，基于实体映射处理核心表 CRUD，并通过注解 SQL 保留复杂列表、详情和统计查询的可读性。
 - 使用 BCrypt 对用户密码进行哈希存储，避免明文密码落库。
 - 抽象 `TokenStore`，默认使用内存版 Token 存储，启用 Redis 后可切换为 Redis Token 存储，适合多实例扩展。
 - 使用 Redis ZSet 实现热门帖子排行榜：
@@ -90,6 +91,10 @@ src/test/resources/schema.sql
 src/test/resources/data.sql
 ```
 
+## 接口文档
+
+核心接口清单见 [docs/API.md](docs/API.md)，覆盖认证、用户资料、帖子、评论、点赞、通知和后台管理接口。
+
 ## 数据库初始化
 
 创建数据库和表：
@@ -104,16 +109,17 @@ source src/main/resources/db/schema.sql;
 source src/main/resources/db/data.sql;
 ```
 
-如果在 Windows 的 MySQL 命令行中执行，可以使用绝对路径：
-
-```sql
-source D:/GitCode/CampusHub/src/main/resources/db/schema.sql;
-source D:/GitCode/CampusHub/src/main/resources/db/data.sql;
-```
-
 ## 本地启动
 
 默认启动只依赖 MySQL。
+
+可以参考环境变量示例配置本机 MySQL、Redis 和 RocketMQ：
+
+```bash
+cp .env.example .env
+```
+
+`.env` 用于记录本地配置，不提交到仓库；启动前可将其中变量配置到系统环境变量、IDE 运行配置或命令行会话中。
 
 常用环境变量：
 
@@ -124,6 +130,10 @@ source D:/GitCode/CampusHub/src/main/resources/db/data.sql;
 | `CAMPUSHUB_DB_USERNAME` | `root` | MySQL 用户名 |
 | `CAMPUSHUB_DB_PASSWORD` | 空 | MySQL 密码 |
 | `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | 浏览量批量刷库间隔 |
+| `CAMPUSHUB_HOT_POST_CACHE_TTL_SECONDS` | `300` | 热门帖子缓存 TTL |
+| `CAMPUSHUB_HOT_POST_CACHE_JITTER_SECONDS` | `60` | 热门帖子缓存随机抖动 |
+| `CAMPUSHUB_HOT_POST_EMPTY_CACHE_TTL_SECONDS` | `30` | 空结果缓存 TTL |
+| `CAMPUSHUB_HOT_POST_REBUILD_LOCK_TTL_SECONDS` | `10` | 热榜回源重建锁 TTL |
 
 启动项目：
 
