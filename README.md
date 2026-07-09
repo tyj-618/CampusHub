@@ -21,6 +21,7 @@ CampusHub 是一个面向校园交流场景的后端服务，提供用户认证�
 | 缓存与排行 | Redis, ZSet |
 | 消息事件 | RocketMQ |
 | 安全 | BCrypt password hashing, Bearer Token |
+| 工程化 | Docker, Docker Compose |
 | 测试 | JUnit, Spring Boot Test, H2 |
 
 ## Architecture
@@ -95,34 +96,107 @@ Content-Type: application/json
 
 ## Quick Start
 
-### 1. 初始化数据库
+### 方式一：Docker Compose 启动依赖
 
-创建 MySQL 数据库后执行：
+适合本地开发。Compose 会启动 MySQL 和 Redis，并自动执行 `src/main/resources/db` 下的初始化脚本。
+
+1. 准备本地环境变量：
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. 启动 MySQL 和 Redis：
+
+```bash
+docker compose up -d mysql redis
+```
+
+3. 使用 Redis profile 启动后端服务：
+
+Linux/macOS:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=redis
+```
+
+Windows PowerShell:
+
+```powershell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=redis"
+```
+
+默认地址：
+
+```text
+http://localhost:8080
+```
+
+常用命令：
+
+```bash
+docker compose ps
+docker compose logs -f mysql
+docker compose logs -f redis
+docker compose down
+```
+
+### 方式二：完整容器化启动
+
+适合验证部署链路。该方式会构建后端镜像，并启动 MySQL、Redis 和应用服务。
+
+```bash
+docker compose --profile app up -d --build
+```
+
+查看应用日志：
+
+```bash
+docker compose logs -f app
+```
+
+停止服务：
+
+```bash
+docker compose --profile app down
+```
+
+### 方式三：手动初始化数据库
+
+如果不使用 Docker Compose，可以创建 MySQL 数据库后执行：
 
 ```sql
 source src/main/resources/db/schema.sql;
 source src/main/resources/db/data.sql;
 ```
 
-### 2. 配置环境变量
+然后参考 `.env.example` 准备本地配置。`.env` 仅用于本地记录，不提交到仓库；启动前可将变量配置到系统环境变量、IDE 运行配置或命令行会话中。
 
-可以参考 `.env.example` 准备本地配置。`.env` 仅用于本地记录，不提交到仓库；启动前可将变量配置到系统环境变量、IDE 运行配置或命令行会话中。
-
-常用配置：
+### 环境变量
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `SERVER_PORT` | `8080` | 服务端口 |
-| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3306/campushub?...` | MySQL 连接地址 |
+| `CAMPUSHUB_MYSQL_PORT` | `3307` | Compose 暴露到宿主机的 MySQL 端口，避免和本机 MySQL 默认端口冲突 |
+| `CAMPUSHUB_DB_URL` | `jdbc:mysql://localhost:3307/campushub?...` | MySQL 连接地址 |
 | `CAMPUSHUB_DB_USERNAME` | `root` | MySQL 用户名 |
-| `CAMPUSHUB_DB_PASSWORD` | 空 | MySQL 密码 |
+| `CAMPUSHUB_DB_PASSWORD` | `campushub_dev_pwd` | MySQL 密码 |
+| `CAMPUSHUB_REDIS_HOST` | `localhost` | Redis 主机 |
+| `CAMPUSHUB_REDIS_PORT` | `6379` | Redis 端口 |
+| `CAMPUSHUB_REDIS_DATABASE` | `0` | Redis 逻辑库 |
 | `CAMPUSHUB_VIEW_COUNT_FLUSH_INTERVAL_SECONDS` | `10` | 浏览量批量刷库间隔 |
 | `CAMPUSHUB_HOT_POST_CACHE_TTL_SECONDS` | `300` | 热门帖子缓存 TTL |
 | `CAMPUSHUB_HOT_POST_CACHE_JITTER_SECONDS` | `60` | 热门帖子缓存随机抖动 |
 | `CAMPUSHUB_HOT_POST_EMPTY_CACHE_TTL_SECONDS` | `30` | 空结果缓存 TTL |
 | `CAMPUSHUB_HOT_POST_REBUILD_LOCK_TTL_SECONDS` | `10` | 热榜回源重建锁 TTL |
 
-### 3. 启动服务
+### 本地 Maven 启动
 
 Linux/macOS:
 

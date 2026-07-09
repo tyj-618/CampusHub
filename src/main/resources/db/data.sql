@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 USE campushub;
 
 INSERT INTO category (name, code, sort_order, status)

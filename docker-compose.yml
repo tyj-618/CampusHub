@@ -1,0 +1,65 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: campushub-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CAMPUSHUB_DB_PASSWORD:-campushub_dev_pwd}
+      MYSQL_DATABASE: campushub
+      TZ: Asia/Shanghai
+    ports:
+      - "${CAMPUSHUB_MYSQL_PORT:-3307}:3306"
+    volumes:
+      - campushub-mysql-data:/var/lib/mysql
+      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./src/main/resources/db/data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: campushub-redis
+    restart: unless-stopped
+    ports:
+      - "${CAMPUSHUB_REDIS_PORT:-6379}:6379"
+    volumes:
+      - campushub-redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    profiles:
+      - app
+    build:
+      context: .
+    container_name: campushub-app
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8080
+      SPRING_PROFILES_ACTIVE: redis
+      CAMPUSHUB_DB_URL: jdbc:mysql://mysql:3306/campushub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      CAMPUSHUB_DB_USERNAME: root
+      CAMPUSHUB_DB_PASSWORD: ${CAMPUSHUB_DB_PASSWORD:-campushub_dev_pwd}
+      CAMPUSHUB_REDIS_HOST: redis
+      CAMPUSHUB_REDIS_PORT: 6379
+      CAMPUSHUB_REDIS_PASSWORD: ""
+      CAMPUSHUB_REDIS_DATABASE: 0
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  campushub-mysql-data:
+  campushub-redis-data:
